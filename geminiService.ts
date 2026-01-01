@@ -4,41 +4,40 @@ import { AnalysisResult } from "./types.ts";
 
 /**
  * Analyzes and optimizes a resume using the strict ATS Quality Control Auditor logic.
- * Uses Gemini 3 Flash for fast, reliable processing.
+ * Expects API_KEY to be set in the environment (Vercel Settings).
  */
 export const analyzeResume = async (
   resumeText: string, 
   signal?: AbortSignal
 ): Promise<AnalysisResult> => {
-  // Use the environment variable set in Vercel
+  // المحرك سيبحث عن المتغير المسمى API_KEY الذي قمت بإضافته في لوحة تحكم Vercel
   const apiKey = process.env.API_KEY;
   
   if (!apiKey || apiKey === "undefined" || apiKey.length < 10) {
-    console.error("CRITICAL: API_KEY is missing in the environment.");
+    console.error("CONFIGURATION ERROR: API_KEY is not found in Vercel Environment Variables.");
     throw new Error("API_KEY_MISSING");
   }
 
   const ai = new GoogleGenAI({ apiKey });
   
-  // Clean and limit input
-  const cleanedInput = resumeText.slice(0, 15000);
+  const cleanedInput = resumeText.slice(0, 12000);
 
   try {
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: `You are an Enterprise-grade ATS Quality Control Auditor and Senior Recruiter. 
-        Perform a deep audit and rewrite the following resume.
+      contents: `You are an Enterprise-grade ATS Quality Control Auditor. 
+        Analyze, score, and rewrite this resume for maximum recruiter compatibility.
         
-        RESUME TO AUDIT:
+        RESUME TEXT:
         """
         ${cleanedInput}
         """`,
       config: {
         systemInstruction: `You are an elite ATS Quality Control Auditor.
-        1. CRITICAL: Do NOT use markdown (**, #, etc.) in the output resume.
-        2. Rewrite bullet points using the Action-Context-Result (ACR) framework.
-        3. Ensure the output is a perfectly structured JSON object.
-        4. Be honest with scores: penalize fluff, lack of metrics, and poor formatting.`,
+        1. REWRITE: Transform all experience into Action-Context-Result (ACR) format.
+        2. CLEAN: Remove all markdown symbols (like **, #, __) from the 'plain_text' resume field.
+        3. AUDIT: Be critical. If the resume lacks metrics, give a low 'experience_impact' score.
+        4. FORMAT: Return the response strictly as JSON.`,
         temperature: 0.1,
         responseMimeType: "application/json",
         responseSchema: {
@@ -132,15 +131,17 @@ export const analyzeResume = async (
     if (signal?.aborted) throw new Error("AbortError");
 
     const rawText = response.text;
-    if (!rawText) throw new Error("The AI returned an empty response.");
+    if (!rawText) throw new Error("EMPTY_AI_RESPONSE");
 
     return JSON.parse(rawText.replace(/```json|```/g, "").trim());
   } catch (error: any) {
-    console.error("Gemini API Error:", error);
-    // Extract meaningful error message
+    console.error("Gemini API Detailed Error:", error);
     const errorMsg = error.message || "Unknown API error";
-    if (errorMsg.includes("429")) throw new Error("Rate limit exceeded. Please try again later.");
-    if (errorMsg.includes("400")) throw new Error("Invalid request or API key. Check Vercel settings.");
+    
+    if (errorMsg.includes("429")) throw new Error("Rate limit exceeded. Please wait 60 seconds.");
+    if (errorMsg.includes("403")) throw new Error("API Key permissions issue. Check Google AI Studio billing/status.");
+    if (errorMsg.includes("400")) throw new Error("Request error. Try again with simpler text.");
+    
     throw new Error(errorMsg);
   }
 };
