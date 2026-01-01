@@ -4,20 +4,23 @@ import { AnalysisResult } from "./types.ts";
 
 /**
  * Analyzes and optimizes a resume using the strict ATS Quality Control Auditor logic.
+ * Requires process.env.API_KEY to be populated (usually via VITE_API_KEY in Vite).
  */
 export const analyzeResume = async (
   resumeText: string, 
   signal?: AbortSignal
 ): Promise<AnalysisResult> => {
-  // المحرك يبحث عن المفتاح في البيئة المجهزة بواسطة index.tsx
+  // المفتاح يتم سحبه من process.env الذي قمنا بتهيئته في index.tsx
   const apiKey = process.env.API_KEY;
   
   if (!apiKey || apiKey === "undefined" || apiKey.length < 10) {
-    console.error("Missing API_KEY. If using Vite, ensure the key is named VITE_API_KEY in Vercel.");
-    throw new Error("API_KEY_MISSING");
+    const errorMsg = "API_KEY_MISSING_IN_BROWSER";
+    console.error("Vite/Vercel Error: Ensure your environment variable is named VITE_API_KEY in Vercel settings.");
+    throw new Error(errorMsg);
   }
 
-  const ai = new GoogleGenAI({ apiKey });
+  // استخدام المفتاح مباشرة كما تطلب التعليمات
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
   const cleanedInput = resumeText.slice(0, 12000);
 
   try {
@@ -137,7 +140,7 @@ export const analyzeResume = async (
     const errorMsg = error.message || "Unknown API error";
     
     if (errorMsg.includes("429")) throw new Error("Rate limit exceeded. Please wait 60 seconds.");
-    if (errorMsg.includes("403")) throw new Error("API Key permissions issue or invalid key.");
+    if (errorMsg.includes("403")) throw new Error("API Key permissions issue. Ensure VITE_API_KEY is correct in Vercel.");
     
     throw new Error(errorMsg);
   }

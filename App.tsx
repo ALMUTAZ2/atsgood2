@@ -67,13 +67,13 @@ export default function App() {
       
       console.error("Audit processing failed:", err);
       
-      let message = 'The Auditor encountered an issue with your resume text.';
-      let hint = 'If you used a PDF, ensure it is not a scanned image. Try pasting raw text directly for better results.';
+      let message = 'The Auditor encountered an issue.';
+      let hint = 'If this is your first time deploying, ensure you have set the API Key correctly.';
       let tech = err.message || 'Unknown technical error';
       
-      if (err.message === "API_KEY_MISSING") {
-        message = "Configuration Error";
-        hint = "The API Key is not being detected. In Vercel, ensure you added 'API_KEY' to Environment Variables and redeployed.";
+      if (err.message === "API_KEY_MISSING_IN_BROWSER") {
+        message = "Vercel Configuration Error";
+        hint = "Vite requires the API Key to be named 'VITE_API_KEY' in Vercel settings. Please rename it, save, and Redeploy.";
       }
 
       setError({ message, hint, tech });
