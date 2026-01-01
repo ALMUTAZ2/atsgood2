@@ -12,23 +12,21 @@ export const analyzeResume = async (
 ): Promise<AnalysisResult> => {
   const apiKey = process.env.API_KEY;
   
-  // Validate API Key presence
   if (!apiKey || apiKey === "undefined" || apiKey.length < 10) {
-    console.error("CRITICAL: API_KEY is missing. Ensure it is set in your environment variables.");
+    console.error("CRITICAL: API_KEY is missing. Ensure it is set.");
     throw new Error("API_KEY_MISSING");
   }
 
-  // Create instance right before use to ensure latest API key
   const ai = new GoogleGenAI({ apiKey });
   
-  // Clean and limit input to prevent token overflow while maintaining context
-  const cleanedInput = resumeText.slice(0, 19000);
+  // Clean and limit input
+  const cleanedInput = resumeText.slice(0, 15000);
 
   try {
     const response = await ai.models.generateContent({
       model: 'gemini-3-pro-preview',
-      contents: `You are an Enterprise-grade ATS Quality Control Auditor and Senior International Recruiter. 
-        Your task is to audit and optimize the following resume for maximum hireability in Fortune 500 companies.
+      contents: `You are an Enterprise-grade ATS Quality Control Auditor. 
+        Analyze, score, and rewrite this resume for maximum Fortune 500 compatibility.
 
         RESUME CONTENT:
         """
@@ -36,12 +34,12 @@ export const analyzeResume = async (
         """`,
       config: {
         systemInstruction: `You are a strict ATS Auditor. 
-        1. Penalize any markdown formatting (like **, ##) or special symbols in the text.
-        2. Focus on "Impact Logic" - every bullet point must quantify achievements.
-        3. Output MUST be a valid JSON object matching the requested schema.
-        4. The optimized resume should be PLAIN TEXT only, perfectly structured for parsers.`,
+        - Penalize markdown (**, ##).
+        - Use Impact Logic (quantified achievements).
+        - Optimized resume must be PLAIN TEXT.
+        - Output MUST be valid JSON.`,
         temperature: 0.1, 
-        thinkingConfig: { thinkingBudget: 4000 }, // Enable reasoning for complex auditing
+        thinkingConfig: { thinkingBudget: 4000 },
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -136,7 +134,6 @@ export const analyzeResume = async (
     const rawText = response.text;
     if (!rawText) throw new Error("EMPTY_RESPONSE");
 
-    // Clean JSON response from possible markdown backticks
     const cleanJson = rawText.replace(/```json|```/g, "").trim();
     return JSON.parse(cleanJson);
   } catch (error: any) {
