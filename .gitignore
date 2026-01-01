@@ -1,6 +1,7 @@
 
 node_modules
 .env
+.process.env
 .env.example
 .env.local
 .env.development.local
