@@ -1,4 +1,3 @@
-
 export interface Scores {
   ats_structure: number;
   keyword_match: number;
@@ -31,6 +30,7 @@ export interface AnalysisResult {
       experience: string;
       skills: string;
       education: string;
+      certifications: string; // ✅ الشهادات الاحترافية فقط
     };
   };
   corrected_after_optimization: OptimizationAuditData;

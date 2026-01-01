@@ -34,6 +34,9 @@ import { jsPDF } from 'jspdf';
 import { Document, Packer, Paragraph, TextRun } from 'docx';
 import FileSaver from 'file-saver';
 
+// قالب المعاينة
+import { ATSPreviewTemplate } from './components/ATSPreviewTemplate.tsx';
+
 const saveAs = (FileSaver as any).saveAs || (FileSaver as any).default || FileSaver;
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://esm.sh/pdfjs-dist@4.10.38/build/pdf.worker.mjs`;
 
@@ -63,7 +66,7 @@ export default function App() {
     'SKILLS',
     'TECHNICAL SKILLS',
     'EDUCATION',
-    'CERTIFICATIONS',
+    'CERTIFICATIONS', // ✅
     'LANGUAGES',
     'ADDITIONAL INFORMATION'
   ];
@@ -125,7 +128,7 @@ export default function App() {
   }, []);
 
   const incrementUsage = () => {
-    setUsageCount(prev => {
+    setUsageCount((prev) => {
       const next = prev + 1;
       try {
         localStorage.setItem('ats_usage_count', String(next));
@@ -254,10 +257,54 @@ export default function App() {
     }
   };
 
-  // ============ PDF EXPORT مع عناوين Bold ============
+  // ========= helper: استخراج الهيدر من plain_text =========
+  const extractHeaderFromPlainText = (plain: string) => {
+    const lines = plain.split('\n').map((l) => l.trim());
+    let fullName = 'Your Name';
+    let title = '';
+    let email = '';
+    let phone = '';
+    let linkedin = '';
+    let location = '';
+
+    let idx = 0;
+    // أول سطر غير فاضي = الاسم
+    while (idx < lines.length && !lines[idx]) idx++;
+    if (idx < lines.length) {
+      fullName = lines[idx];
+      idx++;
+    }
+
+    // بعد الاسم، نقرأ كم سطر لحد ما نوصل هيدر سيكشن
+    for (; idx < lines.length; idx++) {
+      const l = lines[idx];
+      if (!l) continue;
+      if (isSectionHeader(l)) break;
+
+      const lower = l.toLowerCase();
+      if (lower.startsWith('email:')) {
+        email = l.replace(/^[Ee]mail:\s*/,'').trim();
+      } else if (lower.startsWith('mobile:') || lower.startsWith('phone:')) {
+        phone = l.replace(/^(mobile|phone):\s*/i,'').trim();
+      } else if (lower.startsWith('linkedin')) {
+        linkedin = l.replace(/^linkedin:?/i,'').trim();
+      } else {
+        if (!title) title = l;
+        else if (!location) location = l;
+      }
+    }
+
+    return { fullName, title, email, phone, linkedin, location };
+  };
+
+  // ============ PDF EXPORT باستخدام القالب ============
 
   const handleDownloadPDF = () => {
     if (!result) return;
+
+    const { plain_text, sections } = result.corrected_optimized_resume;
+
+    const header = extractHeaderFromPlainText(plain_text);
 
     const doc = new jsPDF();
     const margin = 20;
@@ -265,91 +312,189 @@ export default function App() {
     const usableWidth = pageWidth - margin * 2;
     let y = margin;
 
-    const lines = result.corrected_optimized_resume.plain_text.split('\n');
-
-    lines.forEach((line) => {
-      const trimmed = line.trim();
-
-      if (trimmed === '') {
-        y += 4;
-        return;
+    const ensureNewPage = () => {
+      if (y > doc.internal.pageSize.getHeight() - margin) {
+        doc.addPage();
+        y = margin;
       }
+    };
 
-      const ensureNewPage = () => {
-        if (y > doc.internal.pageSize.getHeight() - margin) {
-          doc.addPage();
-          y = margin;
-        }
-      };
+    // Header
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(14);
+    doc.text(header.fullName, margin, y);
+    y += 7;
 
-      if (isSectionHeader(line)) {
+    if (header.title) {
+      ensureNewPage();
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(11);
+      doc.text(header.title, margin, y);
+      y += 6;
+    }
+
+    const contactParts: string[] = [];
+    if (header.location) contactParts.push(header.location);
+    if (header.email) contactParts.push(`Email: ${header.email}`);
+    if (header.phone) contactParts.push(`Mobile: ${header.phone}`);
+    if (header.linkedin) contactParts.push(`LinkedIn: ${header.linkedin}`);
+
+    if (contactParts.length) {
+      ensureNewPage();
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(10);
+      const contactLine = contactParts.join(' • ');
+      const wrapped = doc.splitTextToSize(contactLine, usableWidth);
+      wrapped.forEach((line) => {
         ensureNewPage();
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(13);
-        const headerText = trimmed.toUpperCase();
-        doc.text(headerText, margin, y);
-        y += 8;
-      } else {
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(10);
+        doc.text(line, margin, y);
+        y += 5;
+      });
+    }
+
+    y += 4;
+
+    const writeSection = (headerTitle: string, body: string) => {
+      if (!body || !body.trim()) return;
+
+      ensureNewPage();
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(12);
+      doc.text(headerTitle.toUpperCase(), margin, y);
+      y += 6;
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(10);
+
+      const bodyLines = body.split('\n').filter((l) => l.trim() !== '');
+      bodyLines.forEach((raw) => {
+        const line = raw.startsWith('-') ? raw : `- ${raw}`;
         const wrapped = doc.splitTextToSize(line, usableWidth);
         wrapped.forEach((wLine: string) => {
           ensureNewPage();
           doc.text(wLine, margin, y);
           y += 5;
         });
-      }
-    });
+      });
+
+      y += 3;
+    };
+
+    writeSection('PROFESSIONAL SUMMARY', sections.summary);
+    writeSection('WORK EXPERIENCE', sections.experience);
+    writeSection('EDUCATION', sections.education);
+    writeSection('SKILLS', sections.skills);
+    writeSection('CERTIFICATIONS', sections.certifications); // ✅
 
     doc.save('ATS_Audited_Resume.pdf');
   };
 
-  // ============ WORD EXPORT مع عناوين Bold ============
+  // ============ WORD EXPORT باستخدام القالب ============
 
   const handleDownloadWord = async () => {
     if (!result) return;
 
-    const lines = result.corrected_optimized_resume.plain_text.split('\n');
+    const { plain_text, sections } = result.corrected_optimized_resume;
+    const header = extractHeaderFromPlainText(plain_text);
 
-    const paragraphs = lines.map((line) => {
-      const trimmed = line.trim();
+    const paragraphs: Paragraph[] = [];
 
-      if (trimmed === '') {
-        return new Paragraph({
-          children: [new TextRun({ text: ' ' })]
-        });
-      }
-
-      if (isSectionHeader(line)) {
-        return new Paragraph({
-          children: [
-            new TextRun({
-              text: trimmed.toUpperCase(),
-              bold: true,
-              size: 22
-            })
-          ],
-          spacing: {
-            before: 200,
-            after: 100
-          }
-        });
-      }
-
-      return new Paragraph({
+    // اسم
+    paragraphs.push(
+      new Paragraph({
+        spacing: { after: 100 },
         children: [
           new TextRun({
-            text: line,
-            bold: false,
-            size: 22
+            text: header.fullName,
+            bold: true,
+            size: 32
           })
-        ],
-        spacing: {
-          before: 60,
-          after: 60
-        }
+        ]
+      })
+    );
+
+    // عنوان وظيفي (إن وجد)
+    if (header.title) {
+      paragraphs.push(
+        new Paragraph({
+          spacing: { after: 60 },
+          children: [
+            new TextRun({
+              text: header.title,
+              bold: false,
+              size: 26
+            })
+          ]
+        })
+      );
+    }
+
+    // سطر تواصل
+    const contactParts: string[] = [];
+    if (header.location) contactParts.push(header.location);
+    if (header.email) contactParts.push(`Email: ${header.email}`);
+    if (header.phone) contactParts.push(`Mobile: ${header.phone}`);
+    if (header.linkedin) contactParts.push(`LinkedIn: ${header.linkedin}`);
+
+    if (contactParts.length) {
+      paragraphs.push(
+        new Paragraph({
+          spacing: { after: 200 },
+          children: [
+            new TextRun({
+              text: contactParts.join(' • '),
+              size: 20
+            })
+          ]
+        })
+      );
+    } else {
+      paragraphs.push(
+        new Paragraph({
+          spacing: { after: 200 },
+          children: [new TextRun({ text: '', size: 20 })]
+        })
+      );
+    }
+
+    const addSection = (headerTitle: string, body: string) => {
+      if (!body || !body.trim()) return;
+
+      paragraphs.push(
+        new Paragraph({
+          spacing: { before: 200, after: 80 },
+          children: [
+            new TextRun({
+              text: headerTitle.toUpperCase(),
+              bold: true,
+              size: 24
+            })
+          ]
+        })
+      );
+
+      const bodyLines = body.split('\n').filter((l) => l.trim() !== '');
+      bodyLines.forEach((raw) => {
+        const text = raw.startsWith('-') ? raw : `- ${raw}`;
+        paragraphs.push(
+          new Paragraph({
+            spacing: { before: 40, after: 40 },
+            children: [
+              new TextRun({
+                text,
+                size: 22
+              })
+            ]
+          })
+        );
       });
-    });
+    };
+
+    addSection('PROFESSIONAL SUMMARY', sections.summary);
+    addSection('WORK EXPERIENCE', sections.experience);
+    addSection('EDUCATION', sections.education);
+    addSection('SKILLS', sections.skills);
+    addSection('CERTIFICATIONS', sections.certifications); // ✅
 
     const doc = new Document({
       sections: [
@@ -369,7 +514,7 @@ export default function App() {
     setResult(null);
     setResumeText('');
     setError(null);
-    // مافي أي لمس للـ usageCount هنا عشان يظل حقيقي
+    // ما نلمس usageCount عشان يظل حقيقي
   };
 
   const radarData = useMemo(() => {
@@ -726,12 +871,13 @@ export default function App() {
               </div>
 
               <div className="lg:col-span-8 space-y-6">
+                {/* النص الخام ATS-Safe */}
                 <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
                   <div className="px-6 py-4 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <CheckCircle2 className="w-5 h-5 text-blue-600" />
                       <h3 className="font-black text-slate-900 uppercase tracking-widest text-xs">
-                        ATS-Safe Resume
+                        ATS-Safe Resume (Raw Text)
                       </h3>
                     </div>
                     <div className="flex items-center gap-2">
@@ -764,6 +910,33 @@ export default function App() {
                     <div className="font-sans text-slate-700 text-sm leading-relaxed selection:bg-blue-100 outline-none">
                       {renderResumeText(result.corrected_optimized_resume.plain_text)}
                     </div>
+                  </div>
+                </div>
+
+                {/* قالب معاينة ATS-Friendly */}
+                <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+                  <div className="px-6 py-4 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="w-5 h-5 text-blue-600" />
+                      <h3 className="font-black text-slate-900 uppercase tracking-widest text-xs">
+                        ATS Template Preview
+                      </h3>
+                    </div>
+                  </div>
+                  <div className="p-6 bg-slate-50">
+                    <ATSPreviewTemplate
+                      fullName="Your Name Here"
+                      title="Target Job Title"
+                      location="City, Country"
+                      email="your-email@example.com"
+                      phone="+966 5X XXX XXXX"
+                      linkedin="linkedin.com/in/your-profile"
+                      summary={result.corrected_optimized_resume.sections.summary}
+                      experience={result.corrected_optimized_resume.sections.experience}
+                      education={result.corrected_optimized_resume.sections.education}
+                      skills={result.corrected_optimized_resume.sections.skills}
+                      certifications={result.corrected_optimized_resume.sections.certifications}
+                    />
                   </div>
                 </div>
 

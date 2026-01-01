@@ -98,7 +98,22 @@ CRITICAL RULES FOR corrected_optimized_resume.plain_text:
    - Each on its own line or at most two simple lines.
    - NO pipes, NO inline "Name | Email | Phone".
 
-7) NO SINGLE-PARAGRAPH OUTPUT:
+7) CERTIFICATIONS (VERY IMPORTANT):
+   - CERTIFICATIONS section must contain ONLY professional / recognized credentials, for example:
+     PMP, CAPM, CFA, CPA, AWS / Azure / GCP certifications, Cisco, VMware, SAP, Oracle,
+     professional engineering licenses, chartered engineer status, etc.
+   - DO NOT put generic training, short workshops, or simple course attendance in CERTIFICATIONS.
+   - Non-professional courses / attendance can be:
+     - Kept under EDUCATION as simple bullets, OR
+     - Omitted if too weak or repetitive.
+   - corrected_optimized_resume.sections.certifications must be built ONLY from this professional content.
+   - The CERTIFICATIONS block in plain_text must match this logic.
+
+8) LANGUAGES:
+   - If languages are provided, keep them in a LANGUAGES section in plain_text.
+   - You do NOT need a separate languages field in sections; keep them in plain_text only.
+
+9) NO SINGLE-PARAGRAPH OUTPUT:
    - It is INVALID to return the entire resume as one paragraph or one long line.
    - The plain_text MUST have multiple lines and blank lines between sections.
 
@@ -110,8 +125,8 @@ SCORING PHILOSOPHY (APPLIES TO ANY USER):
 
 CONSISTENCY:
 - corrected_optimized_resume.plain_text = the final, fully formatted resume for the user.
-- corrected_optimized_resume.sections.summary / experience / skills / education
-  must be aligned with and extracted from plain_text content.
+- corrected_optimized_resume.sections.summary / experience / skills / education / certifications
+  must be aligned with and extracted from the corresponding content in plain_text.
         `,
         temperature: 0.2,
         responseMimeType: "application/json",
@@ -178,8 +193,15 @@ CONSISTENCY:
                     experience: { type: Type.STRING },
                     skills: { type: Type.STRING },
                     education: { type: Type.STRING },
+                    certifications: { type: Type.STRING },
                   },
-                  required: ["summary", "experience", "skills", "education"],
+                  required: [
+                    "summary",
+                    "experience",
+                    "skills",
+                    "education",
+                    "certifications",
+                  ],
                 },
               },
               required: ["plain_text", "sections"],
@@ -242,7 +264,6 @@ CONSISTENCY:
 
     if (signal?.aborted) throw new Error("AbortError");
 
-    // دعم شكلين محتملين للرد من SDK
     const anyResponse = response as any;
     const rawText =
       typeof anyResponse.text === "function"
