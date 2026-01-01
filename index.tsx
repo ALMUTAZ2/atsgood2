@@ -1,14 +1,34 @@
 
 /**
- * Initialize process polyfill.
- * This ensures that 'process.env.API_KEY' works correctly in the browser
- * when deployed on Vercel or similar platforms.
+ * Advanced Process Polyfill for Vite/Vercel Environments.
+ * Detects variables from both traditional process.env and Vite's import.meta.env.
  */
-if (typeof (window as any).process === 'undefined') {
-  (window as any).process = { env: {} };
-} else if (!(window as any).process.env) {
-  (window as any).process.env = {};
-}
+(function() {
+  const windowObj = window as any;
+  
+  // 1. Initialize process.env if it doesn't exist
+  if (typeof windowObj.process === 'undefined') {
+    windowObj.process = { env: {} };
+  } else if (!windowObj.process.env) {
+    windowObj.process.env = {};
+  }
+
+  // 2. Try to grab variables from Vite's import.meta.env (if present)
+  try {
+    // @ts-ignore - import.meta is a Vite-specific feature
+    const viteEnv = (import.meta as any).env || {};
+    Object.keys(viteEnv).forEach(key => {
+      windowObj.process.env[key] = viteEnv[key];
+    });
+    
+    // 3. Bridge the prefix gap: Map VITE_API_KEY to API_KEY if needed
+    if (!windowObj.process.env.API_KEY && windowObj.process.env.VITE_API_KEY) {
+      windowObj.process.env.API_KEY = windowObj.process.env.VITE_API_KEY;
+    }
+  } catch (e) {
+    // Fail silently if import.meta is not supported in this specific bundle context
+  }
+})();
 
 import React from 'react';
 import { createRoot } from 'react-dom/client';

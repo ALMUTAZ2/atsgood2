@@ -4,22 +4,20 @@ import { AnalysisResult } from "./types.ts";
 
 /**
  * Analyzes and optimizes a resume using the strict ATS Quality Control Auditor logic.
- * The API_KEY is fetched from process.env.API_KEY (Set in Vercel or .env file).
  */
 export const analyzeResume = async (
   resumeText: string, 
   signal?: AbortSignal
 ): Promise<AnalysisResult> => {
-  // المحرك يبحث عن API_KEY في متغيرات البيئة
+  // المحرك يبحث عن المفتاح في البيئة المجهزة بواسطة index.tsx
   const apiKey = process.env.API_KEY;
   
   if (!apiKey || apiKey === "undefined" || apiKey.length < 10) {
-    console.error("خطأ في الإعدادات: لم يتم العثور على API_KEY في متغيرات بيئة Vercel.");
+    console.error("Missing API_KEY. If using Vite, ensure the key is named VITE_API_KEY in Vercel.");
     throw new Error("API_KEY_MISSING");
   }
 
   const ai = new GoogleGenAI({ apiKey });
-  
   const cleanedInput = resumeText.slice(0, 12000);
 
   try {
@@ -139,8 +137,7 @@ export const analyzeResume = async (
     const errorMsg = error.message || "Unknown API error";
     
     if (errorMsg.includes("429")) throw new Error("Rate limit exceeded. Please wait 60 seconds.");
-    if (errorMsg.includes("403")) throw new Error("API Key permissions issue. Check Google AI Studio status.");
-    if (errorMsg.includes("400")) throw new Error("Request error. Try again with simpler text.");
+    if (errorMsg.includes("403")) throw new Error("API Key permissions issue or invalid key.");
     
     throw new Error(errorMsg);
   }
