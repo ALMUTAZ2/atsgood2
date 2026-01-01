@@ -11,7 +11,8 @@ export const analyzeResume = async (
   signal?: AbortSignal
 ): Promise<AnalysisResult> => {
   // Access the API key from the environment bridge
-  const apiKey = process.env.API_KEY;
+  const apiKey = (import.meta as any).env?.VITE_API_KEY as string | undefined;
+
   
   if (!apiKey || apiKey === "undefined" || apiKey.length < 5) {
     console.error("ATS Auditor: API_KEY is missing. Check your environment variables.");
