@@ -10,16 +10,17 @@ export const analyzeResume = async (
   resumeText: string, 
   signal?: AbortSignal
 ): Promise<AnalysisResult> => {
-  const apiKey = process.env.API_KEY;
+  // Try to get from env first, otherwise use the specific key provided by the user
+  const apiKey = process.env.API_KEY || "AIzaSyA0zxxgHESUqLIPmL1qooWarXgjacDT2-s";
   
   if (!apiKey || apiKey === "undefined" || apiKey.length < 10) {
-    console.error("CRITICAL: API_KEY is missing. Ensure it is set.");
+    console.error("CRITICAL: API_KEY is missing. Check your configuration.");
     throw new Error("API_KEY_MISSING");
   }
 
   const ai = new GoogleGenAI({ apiKey });
   
-  // Clean and limit input
+  // Clean and limit input to prevent token overflow
   const cleanedInput = resumeText.slice(0, 15000);
 
   try {
@@ -36,8 +37,8 @@ export const analyzeResume = async (
         systemInstruction: `You are a strict ATS Auditor. 
         - Penalize markdown (**, ##).
         - Use Impact Logic (quantified achievements).
-        - Optimized resume must be PLAIN TEXT.
-        - Output MUST be valid JSON.`,
+        - Optimized resume must be PLAIN TEXT only.
+        - Output MUST be a valid JSON object matching the schema exactly.`,
         temperature: 0.1, 
         thinkingConfig: { thinkingBudget: 4000 },
         responseMimeType: "application/json",
