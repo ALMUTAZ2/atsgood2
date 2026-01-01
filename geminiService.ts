@@ -1,6 +1,6 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
-import { AnalysisResult } from "./types";
+import { AnalysisResult } from "./types.ts";
 
 /**
  * Analyzes and optimizes a resume using the strict ATS Quality Control Auditor logic.
@@ -12,12 +12,12 @@ export const analyzeResume = async (
 ): Promise<AnalysisResult> => {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   
-  // Truncate extremely long inputs to avoid token issues, though 12k is usually plenty for resumes.
+  // Truncate extremely long inputs to avoid token issues.
   const cleanedInput = resumeText.slice(0, 12000);
 
   const response = await ai.models.generateContent({
-    // Use gemini-3-pro-preview for complex reasoning and multi-step optimization tasks.
-    model: 'gemini-2.0-flash-lite',
+    // Use gemini-3-pro-preview for complex reasoning tasks.
+    model: 'gemini-3-pro-preview',
     contents: `You are an ATS Quality Control Auditor and Resume Scoring Validator. 
         Your task is to process the resume below exactly as a modern ATS platform would, enforcing realism and credibility.
 
@@ -137,7 +137,6 @@ export const analyzeResume = async (
   if (!rawText) throw new Error("AI returned empty audit data.");
 
   try {
-    // Robust cleanup: Remove markdown code blocks if the model accidentally includes them
     const cleanJson = rawText.replace(/^```json\n?/, '').replace(/\n?```$/, '').trim();
     return JSON.parse(cleanJson);
   } catch (err) {

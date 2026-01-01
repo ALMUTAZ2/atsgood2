@@ -1,19 +1,14 @@
 
 import React, { useState, useRef, useMemo } from 'react';
-import { analyzeResume } from './geminiService';
-import { AnalysisResult, AppStatus } from './types';
+import { analyzeResume } from './geminiService.ts';
+import { AnalysisResult, AppStatus } from './types.ts';
 import { 
   ShieldCheck, 
-  TrendingUp, 
   AlertCircle, 
   Copy, 
   Check, 
   ChevronRight, 
-  Sparkles,
-  BarChart3,
   Search,
-  Layout,
-  UserCheck,
   Zap,
   RotateCcw,
   FileText,
@@ -40,6 +35,9 @@ import { jsPDF } from 'jspdf';
 import { Document, Packer, Paragraph, TextRun } from 'docx';
 import FileSaver from 'file-saver';
 
+// Robust way to get saveAs from different module formats
+const saveAs = (FileSaver as any).saveAs || (FileSaver as any).default || FileSaver;
+
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://esm.sh/pdfjs-dist@4.10.38/build/pdf.worker.mjs`;
 
 const MAX_FILE_SIZE = 2 * 1024 * 1024;
@@ -57,7 +55,6 @@ export default function App() {
   const handleProcess = async () => {
     if (!resumeText.trim()) return;
     
-    // Cleanup previous request if it exists
     if (abortControllerRef.current) abortControllerRef.current.abort();
     abortControllerRef.current = new AbortController();
 
@@ -124,10 +121,6 @@ export default function App() {
     return result.value;
   };
 
-  /**
-   * Enhanced PDF extraction that groups items by Y-coordinate to preserve 
-   * line structure and layout logic.
-   */
   const extractTextFromPDF = async (file: File): Promise<string> => {
     const arrayBuffer = await file.arrayBuffer();
     const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
@@ -137,7 +130,6 @@ export default function App() {
     for (let i = 1; i <= pdf.numPages; i++) {
       const page = await pdf.getPage(i);
       const textContent = await page.getTextContent();
-      
       const items = textContent.items as any[];
       const lines: { [key: number]: string[] } = {};
       
@@ -149,7 +141,6 @@ export default function App() {
       
       const sortedY = Object.keys(lines).map(Number).sort((a, b) => b - a);
       const pageText = sortedY.map(y => lines[y].join(' ')).join('\n');
-      
       fullText += pageText + '\n\n';
     }
     return fullText;
@@ -188,12 +179,12 @@ export default function App() {
       sections: [{
         properties: {},
         children: lines.map(line => new Paragraph({
-          children: [new TextRun({ text: line, font: "Calibri", size: 10 })],
+          children: [new TextRun({ text: line, font: "Calibri", size: 20 })],
         })),
       }],
     });
     const blob = await Packer.toBlob(doc);
-    FileSaver.saveAs(blob, 'ATS_Audited_Resume.docx');
+    saveAs(blob, 'ATS_Audited_Resume.docx');
   };
 
   const handleReset = () => {
@@ -263,7 +254,7 @@ export default function App() {
                   { icon: FileSearch, title: "Penalty Audit", desc: "Markdown & symbol check" },
                   { icon: Target, title: "Impact Logic", desc: "Quantified results only" },
                   { icon: Zap, title: "Word Density", desc: "500-700 word precision" },
-                  { icon: UserCheck, title: "Trust Scoring", desc: "Conservative confidence" },
+                  { icon: FileSearch, title: "Trust Scoring", desc: "Conservative confidence" },
                 ].map((item, idx) => (
                   <div key={idx} className="p-4 bg-white border border-slate-200 rounded-xl shadow-sm">
                     <item.icon className="w-6 h-6 text-blue-600 mb-2" />
@@ -360,7 +351,6 @@ export default function App() {
 
         {status === 'completed' && result && (
           <div className="space-y-8 animate-in fade-in duration-1000">
-            {/* Top Auditor Insights */}
             <div className="bg-slate-900 rounded-3xl p-8 text-white shadow-2xl overflow-hidden relative">
               <div className="absolute top-0 right-0 p-8 opacity-10">
                 <ShieldCheck className="w-64 h-64" />
@@ -406,7 +396,6 @@ export default function App() {
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-              {/* Left Column: Stats & Findings */}
               <div className="lg:col-span-4 space-y-6">
                 <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
                   <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-6 flex items-center gap-2">
@@ -441,7 +430,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Right Column: Optimized Content */}
               <div className="lg:col-span-8 space-y-6">
                 <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
                   <div className="px-6 py-4 border-b border-slate-100 bg-slate-50 flex items-center justify-between">

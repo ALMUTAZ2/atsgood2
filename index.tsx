@@ -1,13 +1,12 @@
 
-import React from 'react';
-import { createRoot } from 'react-dom/client';
-import App from './App';
-
-// Polyfill process for environments where it's not defined at runtime to prevent ReferenceError.
-// This is common in browser-based ESM deployments without a thick build layer.
+// 1. Initialize process polyfill immediately to prevent ReferenceErrors in browser
 if (typeof (window as any).process === 'undefined') {
   (window as any).process = { env: {} };
 }
+
+import React from 'react';
+import { createRoot } from 'react-dom/client';
+import App from './App.tsx';
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
