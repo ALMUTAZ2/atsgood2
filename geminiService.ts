@@ -4,17 +4,17 @@ import { AnalysisResult } from "./types.ts";
 
 /**
  * Analyzes and optimizes a resume using the strict ATS Quality Control Auditor logic.
- * Expects API_KEY to be set in the environment (Vercel Settings).
+ * The API_KEY is fetched from process.env.API_KEY (Set in Vercel or .env file).
  */
 export const analyzeResume = async (
   resumeText: string, 
   signal?: AbortSignal
 ): Promise<AnalysisResult> => {
-  // المحرك سيبحث عن المتغير المسمى API_KEY الذي قمت بإضافته في لوحة تحكم Vercel
+  // المحرك يبحث عن API_KEY في متغيرات البيئة
   const apiKey = process.env.API_KEY;
   
   if (!apiKey || apiKey === "undefined" || apiKey.length < 10) {
-    console.error("CONFIGURATION ERROR: API_KEY is not found in Vercel Environment Variables.");
+    console.error("خطأ في الإعدادات: لم يتم العثور على API_KEY في متغيرات بيئة Vercel.");
     throw new Error("API_KEY_MISSING");
   }
 
@@ -135,11 +135,11 @@ export const analyzeResume = async (
 
     return JSON.parse(rawText.replace(/```json|```/g, "").trim());
   } catch (error: any) {
-    console.error("Gemini API Detailed Error:", error);
+    console.error("Gemini API Error:", error);
     const errorMsg = error.message || "Unknown API error";
     
     if (errorMsg.includes("429")) throw new Error("Rate limit exceeded. Please wait 60 seconds.");
-    if (errorMsg.includes("403")) throw new Error("API Key permissions issue. Check Google AI Studio billing/status.");
+    if (errorMsg.includes("403")) throw new Error("API Key permissions issue. Check Google AI Studio status.");
     if (errorMsg.includes("400")) throw new Error("Request error. Try again with simpler text.");
     
     throw new Error(errorMsg);
