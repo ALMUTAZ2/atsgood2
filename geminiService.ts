@@ -4,11 +4,19 @@ import { AnalysisResult } from "./types";
 
 /**
  * Analyzes and optimizes a resume using the strict ATS Quality Control Auditor logic.
+ * Supports cancellation via AbortSignal.
  */
-export const analyzeResume = async (resumeText: string): Promise<AnalysisResult> => {
+export const analyzeResume = async (
+  resumeText: string, 
+  signal?: AbortSignal
+): Promise<AnalysisResult> => {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   
+  // Truncate extremely long inputs to avoid token issues, though 12k is usually plenty for resumes.
+  const cleanedInput = resumeText.slice(0, 12000);
+
   const response = await ai.models.generateContent({
+    // Use gemini-3-pro-preview for complex reasoning and multi-step optimization tasks.
     model: 'gemini-2.0-flash-lite',
     contents: `You are an ATS Quality Control Auditor and Resume Scoring Validator. 
         Your task is to process the resume below exactly as a modern ATS platform would, enforcing realism and credibility.
@@ -27,7 +35,7 @@ export const analyzeResume = async (resumeText: string): Promise<AnalysisResult>
 
         RESUME TO PROCESS:
         """
-        ${resumeText}
+        ${cleanedInput}
         """`,
     config: {
       temperature: 0,
@@ -121,7 +129,19 @@ export const analyzeResume = async (resumeText: string): Promise<AnalysisResult>
     }
   });
 
-  const text = response.text;
-  if (!text) throw new Error("AI returned empty audit data.");
-  return JSON.parse(text);
+  if (signal?.aborted) {
+    throw new Error("Analysis aborted by user.");
+  }
+
+  const rawText = response.text;
+  if (!rawText) throw new Error("AI returned empty audit data.");
+
+  try {
+    // Robust cleanup: Remove markdown code blocks if the model accidentally includes them
+    const cleanJson = rawText.replace(/^```json\n?/, '').replace(/\n?```$/, '').trim();
+    return JSON.parse(cleanJson);
+  } catch (err) {
+    console.error("Failed to parse AI response as JSON:", rawText);
+    throw new Error("The Auditor generated an invalid data structure. Please try again.");
+  }
 };

@@ -1,5 +1,5 @@
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
 import { analyzeResume } from './geminiService';
 import { AnalysisResult, AppStatus } from './types';
 import { 
@@ -23,7 +23,8 @@ import {
   ShieldAlert,
   Target,
   FileSearch,
-  CheckCircle2
+  CheckCircle2,
+  XCircle
 } from 'lucide-react';
 import { 
   ResponsiveContainer, 
@@ -49,21 +50,41 @@ export default function App() {
   const [extracting, setExtracting] = useState(false);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [copied, setCopied] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ message: string; hint?: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const handleProcess = async () => {
     if (!resumeText.trim()) return;
+    
+    // Cleanup previous request if it exists
+    if (abortControllerRef.current) abortControllerRef.current.abort();
+    abortControllerRef.current = new AbortController();
+
     setStatus('analyzing');
     setError(null);
     try {
-      const data = await analyzeResume(resumeText);
+      const data = await analyzeResume(resumeText, abortControllerRef.current.signal);
       setResult(data);
       setStatus('completed');
     } catch (err: any) {
+      if (err.name === 'AbortError' || err.message?.includes('aborted')) return;
+      
       console.error(err);
-      setError('Analysis failed. The ATS Auditor requires high-quality text input.');
+      setError({
+        message: 'The Auditor encountered an issue with your resume text.',
+        hint: 'If you used a PDF, ensure it is not a scanned image. Try pasting raw text directly for better results.'
+      });
       setStatus('error');
+    } finally {
+      abortControllerRef.current = null;
+    }
+  };
+
+  const handleCancelAnalysis = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      setStatus('idle');
     }
   };
 
@@ -71,7 +92,7 @@ export default function App() {
     const file = e.target.files?.[0];
     if (!file) return;
     if (file.size > MAX_FILE_SIZE) {
-      setError('File size exceeds 2MB limit.');
+      setError({ message: 'File size exceeds 2MB limit.' });
       return;
     }
     setExtracting(true);
@@ -87,10 +108,10 @@ export default function App() {
       } else {
         throw new Error('Unsupported format. Please use PDF, DOCX, or TXT.');
       }
-      if (!text.trim()) throw new Error('Could not extract text from file.');
+      if (!text.trim()) throw new Error('Could not extract meaningful text. Is this a scanned image?');
       setResumeText(text);
     } catch (err: any) {
-      setError(err.message || 'Error reading file.');
+      setError({ message: err.message || 'Error reading file.' });
     } finally {
       setExtracting(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -103,16 +124,33 @@ export default function App() {
     return result.value;
   };
 
+  /**
+   * Enhanced PDF extraction that groups items by Y-coordinate to preserve 
+   * line structure and layout logic.
+   */
   const extractTextFromPDF = async (file: File): Promise<string> => {
     const arrayBuffer = await file.arrayBuffer();
     const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
     const pdf = await loadingTask.promise;
     let fullText = '';
+    
     for (let i = 1; i <= pdf.numPages; i++) {
       const page = await pdf.getPage(i);
       const textContent = await page.getTextContent();
-      const pageText = textContent.items.map((item: any) => (item as any).str).join(' ');
-      fullText += pageText + '\n';
+      
+      const items = textContent.items as any[];
+      const lines: { [key: number]: string[] } = {};
+      
+      items.forEach(item => {
+        const y = Math.round(item.transform[5]);
+        if (!lines[y]) lines[y] = [];
+        lines[y].push(item.str);
+      });
+      
+      const sortedY = Object.keys(lines).map(Number).sort((a, b) => b - a);
+      const pageText = sortedY.map(y => lines[y].join(' ')).join('\n');
+      
+      fullText += pageText + '\n\n';
     }
     return fullText;
   };
@@ -150,7 +188,7 @@ export default function App() {
       sections: [{
         properties: {},
         children: lines.map(line => new Paragraph({
-          children: [new TextRun({ text: line, font: "Arial", size: 22 })],
+          children: [new TextRun({ text: line, font: "Calibri", size: 10 })],
         })),
       }],
     });
@@ -165,29 +203,16 @@ export default function App() {
     setError(null);
   };
 
-  const getScoreColor = (score: number) => {
-    if (score >= 85) return 'text-emerald-600 bg-emerald-50 border-emerald-200';
-    if (score >= 70) return 'text-blue-600 bg-blue-50 border-blue-200';
-    if (score >= 60) return 'text-amber-600 bg-amber-50 border-amber-200';
-    return 'text-rose-600 bg-rose-50 border-rose-200';
-  };
-
-  const getRiskColor = (risk: string) => {
-    switch (risk.toLowerCase()) {
-      case 'low': return 'text-emerald-700 bg-emerald-100';
-      case 'medium': return 'text-amber-700 bg-amber-100';
-      case 'high': return 'text-rose-700 bg-rose-100';
-      default: return 'text-slate-700 bg-slate-100';
-    }
-  };
-
-  const radarData = result ? [
-    { subject: 'Structure', A: result.corrected_before_optimization.scores.ats_structure, B: result.corrected_after_optimization.scores.ats_structure, fullMark: 100 },
-    { subject: 'Keywords', A: result.corrected_before_optimization.scores.keyword_match, B: result.corrected_after_optimization.scores.keyword_match, fullMark: 100 },
-    { subject: 'Impact', A: result.corrected_before_optimization.scores.experience_impact, B: result.corrected_after_optimization.scores.experience_impact, fullMark: 100 },
-    { subject: 'Format', A: result.corrected_before_optimization.scores.formatting_readability, B: result.corrected_after_optimization.scores.formatting_readability, fullMark: 100 },
-    { subject: 'Alignment', A: result.corrected_before_optimization.scores.seniority_alignment, B: result.corrected_after_optimization.scores.seniority_alignment, fullMark: 100 },
-  ] : [];
+  const radarData = useMemo(() => {
+    if (!result) return [];
+    return [
+      { subject: 'Structure', A: result.corrected_before_optimization.scores.ats_structure, B: result.corrected_after_optimization.scores.ats_structure, fullMark: 100 },
+      { subject: 'Keywords', A: result.corrected_before_optimization.scores.keyword_match, B: result.corrected_after_optimization.scores.keyword_match, fullMark: 100 },
+      { subject: 'Impact', A: result.corrected_before_optimization.scores.experience_impact, B: result.corrected_after_optimization.scores.experience_impact, fullMark: 100 },
+      { subject: 'Format', A: result.corrected_before_optimization.scores.formatting_readability, B: result.corrected_after_optimization.scores.formatting_readability, fullMark: 100 },
+      { subject: 'Alignment', A: result.corrected_before_optimization.scores.seniority_alignment, B: result.corrected_after_optimization.scores.seniority_alignment, fullMark: 100 },
+    ];
+  }, [result]);
 
   return (
     <div className="min-h-screen pb-12 bg-[#f4f7f9]">
@@ -207,7 +232,7 @@ export default function App() {
             <span>Logic v4.2</span>
           </div>
           {status === 'completed' && (
-            <button onClick={handleReset} className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-slate-600 hover:text-slate-900">
+            <button onClick={handleReset} className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors">
               <RotateCcw className="w-4 h-4" /> Reset Audit
             </button>
           )}
@@ -275,7 +300,14 @@ export default function App() {
                   value={resumeText}
                   onChange={(e) => setResumeText(e.target.value)}
                 />
-                {error && <div className="mt-4 p-3 bg-rose-50 border border-rose-100 text-rose-600 text-xs font-bold rounded-lg flex items-center gap-2"><AlertCircle className="w-4 h-4" /> {error}</div>}
+                {error && (
+                  <div className="mt-4 p-4 bg-rose-50 border border-rose-100 text-rose-600 rounded-lg flex flex-col gap-1">
+                    <div className="flex items-center gap-2 font-bold text-sm">
+                      <AlertCircle className="w-4 h-4" /> {error.message}
+                    </div>
+                    {error.hint && <p className="text-xs text-rose-500 ml-6">{error.hint}</p>}
+                  </div>
+                )}
                 <button onClick={handleProcess} disabled={!resumeText.trim() || extracting} className="w-full mt-4 py-4 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-bold rounded-xl transition-all shadow-lg flex items-center justify-center gap-2">
                   Initiate Quality Audit <ChevronRight className="w-5 h-5" />
                 </button>
@@ -285,14 +317,43 @@ export default function App() {
         )}
 
         {status === 'analyzing' && (
-          <div className="flex flex-col items-center justify-center min-h-[60vh] text-center space-y-6">
+          <div className="flex flex-col items-center justify-center min-h-[60vh] text-center space-y-8">
             <div className="relative">
               <div className="w-24 h-24 border-4 border-blue-100 border-t-blue-600 rounded-full animate-spin"></div>
               <ShieldCheck className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 text-blue-600" />
             </div>
             <div className="space-y-2">
               <h3 className="text-2xl font-bold text-slate-900 uppercase tracking-tight">Audit in Progress</h3>
-              <p className="text-slate-500 font-medium">Scrubbing text for AI-generated artifacts and score inflation...</p>
+              <p className="text-slate-500 font-medium max-w-md">Scrubbing text for AI-generated artifacts, markdown code blocks, and score inflation...</p>
+            </div>
+            <button 
+              onClick={handleCancelAnalysis}
+              className="px-6 py-2 border border-slate-200 text-slate-500 text-sm font-bold rounded-lg hover:bg-slate-50 transition-colors flex items-center gap-2"
+            >
+              <XCircle className="w-4 h-4" /> Cancel Analysis
+            </button>
+          </div>
+        )}
+
+        {status === 'error' && (
+          <div className="max-w-2xl mx-auto bg-white border border-rose-100 rounded-3xl p-12 text-center shadow-sm">
+            <div className="w-20 h-20 bg-rose-50 text-rose-600 rounded-full flex items-center justify-center mx-auto mb-6">
+              <ShieldAlert className="w-10 h-10" />
+            </div>
+            <h3 className="text-2xl font-black text-slate-900 mb-4">Audit Failed</h3>
+            <div className="text-slate-600 space-y-4 mb-8">
+              <p>{error?.message}</p>
+              {error?.hint && (
+                <div className="bg-slate-50 p-4 rounded-xl text-xs text-left border border-slate-100">
+                  <span className="font-bold text-slate-900 block mb-1 uppercase tracking-widest">Recommended Action</span>
+                  {error.hint}
+                </div>
+              )}
+            </div>
+            <div className="flex gap-4 justify-center">
+              <button onClick={() => setStatus('idle')} className="px-8 py-3 bg-slate-900 text-white font-bold rounded-xl hover:bg-black transition-colors">
+                Back to Dashboard
+              </button>
             </div>
           </div>
         )}
@@ -334,7 +395,7 @@ export default function App() {
                   <div className="mt-4 pt-4 border-t border-white/20">
                     <span className="text-blue-200 text-xs font-bold">Confidence Level</span>
                     <div className="w-full bg-blue-900 h-2 mt-2 rounded-full overflow-hidden">
-                      <div className="bg-white h-full" style={{ width: `${result.corrected_after_optimization.ats_confidence_level}%` }}></div>
+                      <div className="bg-white h-full transition-all duration-1000" style={{ width: `${result.corrected_after_optimization.ats_confidence_level}%` }}></div>
                     </div>
                     <div className="text-right text-xs font-bold text-white mt-1">
                       {result.corrected_after_optimization.ats_confidence_level}%
@@ -392,10 +453,10 @@ export default function App() {
                       <button onClick={handleCopy} className="p-2 hover:bg-white rounded-lg transition-colors border border-transparent hover:border-slate-200">
                         {copied ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4 text-slate-400" />}
                       </button>
-                      <button onClick={handleDownloadPDF} className="flex items-center gap-2 px-3 py-1.5 bg-slate-900 text-white rounded-lg text-xs font-bold hover:bg-black transition-all">
+                      <button onClick={handleDownloadPDF} className="flex items-center gap-2 px-3 py-1.5 bg-slate-900 text-white rounded-lg text-sm font-bold hover:bg-black transition-all">
                         <FileDown className="w-4 h-4" /> PDF
                       </button>
-                      <button onClick={handleDownloadWord} className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 transition-all">
+                      <button onClick={handleDownloadWord} className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700 transition-all">
                         <Download className="w-4 h-4" /> DOCX
                       </button>
                     </div>
