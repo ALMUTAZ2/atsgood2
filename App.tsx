@@ -1,4 +1,4 @@
-import React, { useState, useRef, useMemo } from 'react';
+import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { analyzeResume } from './geminiService.ts';
 import { AnalysisResult, AppStatus } from './types.ts';
 import {
@@ -38,6 +38,7 @@ const saveAs = (FileSaver as any).saveAs || (FileSaver as any).default || FileSa
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://esm.sh/pdfjs-dist@4.10.38/build/pdf.worker.mjs`;
 
 const MAX_FILE_SIZE = 2 * 1024 * 1024;
+const MAX_USAGE = 2; // حد الاستخدام لكل متصفح
 
 export default function App() {
   const [resumeText, setResumeText] = useState('');
@@ -46,10 +47,12 @@ export default function App() {
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<{ message: string; hint?: string; tech?: string } | null>(null);
+  const [usageCount, setUsageCount] = useState<number>(0);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  // ================== SECTION HEADERS LOGIC (UI + PDF + WORD) ==================
+  // ================== SECTION HEADERS LOGIC ==================
 
   const SECTION_HEADERS = [
     'PROFESSIONAL SUMMARY',
@@ -71,7 +74,8 @@ export default function App() {
     const upper = t.toUpperCase();
 
     if (SECTION_HEADERS.includes(upper)) return true;
-    // شبه عنوان: كله كابيتال، مو بوليت، وطوله معقول
+
+    // عنوان عام: كله كابيتال، مو بوليت، وطوله معقول
     if (upper === t && !t.startsWith('-') && t.length <= 60) return true;
 
     return false;
@@ -104,10 +108,49 @@ export default function App() {
     });
   };
 
+  // ================== USAGE LIMIT (localStorage) ==================
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('ats_usage_count');
+      if (saved) {
+        const num = Number(saved);
+        if (!Number.isNaN(num)) {
+          setUsageCount(num);
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to read usage count from localStorage', e);
+    }
+  }, []);
+
+  const incrementUsage = () => {
+    setUsageCount(prev => {
+      const next = prev + 1;
+      try {
+        localStorage.setItem('ats_usage_count', String(next));
+      } catch (e) {
+        console.warn('Failed to save usage count', e);
+      }
+      return next;
+    });
+  };
+
   // ================== HANDLERS ==================
 
   const handleProcess = async () => {
     if (!resumeText.trim()) return;
+
+    // تحقق من الحد قبل الإرسال
+    if (usageCount >= MAX_USAGE) {
+      setError({
+        message: 'Usage limit reached.',
+        hint: 'You have already used the free ATS audit 2 times on this browser. Please upgrade your plan or use another account/device.',
+        tech: 'USAGE_LIMIT_REACHED'
+      });
+      setStatus('error');
+      return;
+    }
 
     if (abortControllerRef.current) abortControllerRef.current.abort();
     abortControllerRef.current = new AbortController();
@@ -117,6 +160,10 @@ export default function App() {
     try {
       const data = await analyzeResume(resumeText, abortControllerRef.current.signal);
       setResult(data);
+
+      // زيادة العداد بعد نجاح التحليل
+      incrementUsage();
+
       setStatus('completed');
     } catch (err: any) {
       if (err.name === 'AbortError' || err.message?.includes('aborted')) return;
@@ -124,7 +171,8 @@ export default function App() {
       console.error('Audit processing failed:', err);
 
       let message = 'The Auditor encountered an issue.';
-      let hint = 'If this is your first time deploying, ensure you have set the VITE_API_KEY correctly in Vercel.';
+      let hint =
+        'If this is your first time deploying, ensure you have set the VITE_API_KEY correctly in Vercel.';
       let tech = err.message || 'Unknown technical error';
 
       if (err.message === 'API_KEY_MISSING_IN_BROWSER') {
@@ -222,13 +270,11 @@ export default function App() {
     lines.forEach((line) => {
       const trimmed = line.trim();
 
-      // سطر فاضي = مسافة بسيطة
       if (trimmed === '') {
         y += 4;
         return;
       }
 
-      // إذا قربنا من نهاية الصفحة → صفحة جديدة
       const ensureNewPage = () => {
         if (y > doc.internal.pageSize.getHeight() - margin) {
           doc.addPage();
@@ -242,7 +288,7 @@ export default function App() {
         doc.setFontSize(13);
         const headerText = trimmed.toUpperCase();
         doc.text(headerText, margin, y);
-        y += 8; // مسافة بعد العنوان
+        y += 8;
       } else {
         doc.setFont('helvetica', 'normal');
         doc.setFontSize(10);
@@ -268,21 +314,19 @@ export default function App() {
     const paragraphs = lines.map((line) => {
       const trimmed = line.trim();
 
-      // سطر فاضي
       if (trimmed === '') {
         return new Paragraph({
           children: [new TextRun({ text: ' ' })]
         });
       }
 
-      // عنوان قسم
       if (isSectionHeader(line)) {
         return new Paragraph({
           children: [
             new TextRun({
               text: trimmed.toUpperCase(),
               bold: true,
-              size: 20 // أكبر من النص العادي
+              size: 22
             })
           ],
           spacing: {
@@ -292,13 +336,12 @@ export default function App() {
         });
       }
 
-      // نص عادي / bullets
       return new Paragraph({
         children: [
           new TextRun({
             text: line,
             bold: false,
-            size: 22 // تقريباً 11pt
+            size: 22
           })
         ],
         spacing: {
@@ -326,6 +369,7 @@ export default function App() {
     setResult(null);
     setResumeText('');
     setError(null);
+    // مافي أي لمس للـ usageCount هنا عشان يظل حقيقي
   };
 
   const radarData = useMemo(() => {
@@ -413,6 +457,9 @@ export default function App() {
                   Our Auditor applies strict penalties for
                   parsing errors and generic content that recruiters reject.
                 </p>
+                <p className="text-xs text-slate-500 mt-2">
+                  Uses: <span className="font-bold">{usageCount}</span> / {MAX_USAGE}
+                </p>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -485,20 +532,24 @@ export default function App() {
                     {error.hint && (
                       <p className="text-xs text-rose-500 ml-6 italic">{error.hint}</p>
                     )}
-                    {error.tech && (
-                      <p className="mt-2 text-[10px] text-rose-400 font-mono">
-                        Error trace: {error.tech}
+                    {error.tech && error.tech === 'USAGE_LIMIT_REACHED' && (
+                      <p className="mt-2 text-[11px] text-rose-500">
+                        This browser has reached the free quota. Further audits are blocked.
                       </p>
                     )}
                   </div>
                 )}
                 <button
                   onClick={handleProcess}
-                  disabled={!resumeText.trim() || extracting}
+                  disabled={!resumeText.trim() || extracting || usageCount >= MAX_USAGE}
                   className="w-full mt-4 py-4 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-bold rounded-xl transition-all shadow-lg flex items-center justify-center gap-2"
                 >
-                  Initiate Quality Audit <ChevronRight className="w-5 h-5" />
+                  {usageCount >= MAX_USAGE ? 'Usage Limit Reached' : 'Initiate Quality Audit'}
+                  <ChevronRight className="w-5 h-5" />
                 </button>
+                <p className="mt-2 text-[11px] text-slate-500 text-center">
+                  Uses: <span className="font-bold">{usageCount}</span> / {MAX_USAGE}
+                </p>
               </div>
             </div>
           </div>
@@ -561,7 +612,7 @@ export default function App() {
               <div className="absolute top-0 right-0 p-8 opacity-10">
                 <ShieldCheck className="w-64 h-64" />
               </div>
-            <div className="relative z-10 grid grid-cols-1 lg:grid-cols-3 gap-8">
+              <div className="relative z-10 grid grid-cols-1 lg:grid-cols-3 gap-8">
                 <div className="lg:col-span-2 space-y-4">
                   <div className="inline-flex items-center gap-2 px-3 py-1 bg-blue-500/20 text-blue-300 text-xs font-black uppercase tracking-[0.2em] rounded">
                     Audit Verdict
