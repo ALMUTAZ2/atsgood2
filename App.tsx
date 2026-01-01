@@ -1,13 +1,12 @@
-
 import React, { useState, useRef, useMemo } from 'react';
 import { analyzeResume } from './geminiService.ts';
 import { AnalysisResult, AppStatus } from './types.ts';
-import { 
-  ShieldCheck, 
-  AlertCircle, 
-  Copy, 
-  Check, 
-  ChevronRight, 
+import {
+  ShieldCheck,
+  AlertCircle,
+  Copy,
+  Check,
+  ChevronRight,
   Search,
   Zap,
   RotateCcw,
@@ -21,13 +20,13 @@ import {
   CheckCircle2,
   XCircle
 } from 'lucide-react';
-import { 
-  ResponsiveContainer, 
+import {
+  ResponsiveContainer,
   Legend,
-  Radar, 
-  RadarChart, 
-  PolarGrid, 
-  PolarAngleAxis 
+  Radar,
+  RadarChart,
+  PolarGrid,
+  PolarAngleAxis
 } from 'recharts';
 import * as mammoth from 'mammoth';
 import * as pdfjsLib from 'pdfjs-dist';
@@ -50,9 +49,66 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
+  // ================== SECTION HEADERS LOGIC (UI + PDF + WORD) ==================
+
+  const SECTION_HEADERS = [
+    'PROFESSIONAL SUMMARY',
+    'SUMMARY',
+    'EXPERIENCE',
+    'WORK EXPERIENCE',
+    'PROJECTS',
+    'SKILLS',
+    'TECHNICAL SKILLS',
+    'EDUCATION',
+    'CERTIFICATIONS',
+    'LANGUAGES',
+    'ADDITIONAL INFORMATION'
+  ];
+
+  const isSectionHeader = (line: string) => {
+    const t = line.trim();
+    if (!t) return false;
+    const upper = t.toUpperCase();
+
+    if (SECTION_HEADERS.includes(upper)) return true;
+    // شبه عنوان: كله كابيتال، مو بوليت، وطوله معقول
+    if (upper === t && !t.startsWith('-') && t.length <= 60) return true;
+
+    return false;
+  };
+
+  const renderResumeText = (text: string) => {
+    return text.split('\n').map((line, idx) => {
+      const trimmed = line.trim();
+
+      if (trimmed === '') {
+        return <div key={idx} className="h-3" />;
+      }
+
+      if (isSectionHeader(line)) {
+        return (
+          <p
+            key={idx}
+            className="mt-5 mb-2 text-base font-extrabold text-slate-900 tracking-wide"
+          >
+            {trimmed.toUpperCase()}
+          </p>
+        );
+      }
+
+      return (
+        <p key={idx} className="text-sm text-slate-700">
+          {line}
+        </p>
+      );
+    });
+  };
+
+  // ================== HANDLERS ==================
+
   const handleProcess = async () => {
     if (!resumeText.trim()) return;
-    
+
     if (abortControllerRef.current) abortControllerRef.current.abort();
     abortControllerRef.current = new AbortController();
 
@@ -64,18 +120,17 @@ export default function App() {
       setStatus('completed');
     } catch (err: any) {
       if (err.name === 'AbortError' || err.message?.includes('aborted')) return;
-      
-      console.error("Audit processing failed:", err);
-      
-      let message = 'The Auditor encountered an issue.';
-      let hint = 'If this is your first time deploying, ensure you have set the API Key correctly.';
-      let tech = err.message || 'Unknown technical error';
-      
-      if (err.message === "API_KEY_MISSING_IN_BROWSER") {
-  message = "Vercel Configuration Error";
-  hint = "Add an environment variable named 'GEMINI_API_KEY' in Vercel → Project Settings → Environment Variables, redeploy the project, then try again.";
-}
 
+      console.error('Audit processing failed:', err);
+
+      let message = 'The Auditor encountered an issue.';
+      let hint = 'If this is your first time deploying, ensure you have set the VITE_API_KEY correctly in Vercel.';
+      let tech = err.message || 'Unknown technical error';
+
+      if (err.message === 'API_KEY_MISSING_IN_BROWSER') {
+        message = 'Vercel Configuration Error';
+        hint = "Add 'VITE_API_KEY' in Vercel Environment Variables, redeploy, and try again.";
+      }
 
       setError({ message, hint, tech });
       setStatus('error');
@@ -111,7 +166,7 @@ export default function App() {
       } else {
         throw new Error('Unsupported format. Please use PDF, DOCX, or TXT.');
       }
-      if (!text.trim()) throw new Error('Could not extract meaningful text. Is this a scanned image?');
+      if (!text.trim()) throw new Error('Could not extract meaningful text.');
       setResumeText(text);
     } catch (err: any) {
       setError({ message: err.message || 'Error reading file.' });
@@ -132,12 +187,12 @@ export default function App() {
     const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
     const pdf = await loadingTask.promise;
     let fullText = '';
-    
+
     for (let i = 1; i <= pdf.numPages; i++) {
       const page = await pdf.getPage(i);
       const textContent = await page.getTextContent();
       const items = textContent.items as any[];
-      const pageText = items.map(item => item.str).join(' ');
+      const pageText = items.map((item) => item.str).join(' ');
       fullText += pageText + '\n\n';
     }
     return fullText;
@@ -151,35 +206,117 @@ export default function App() {
     }
   };
 
+  // ============ PDF EXPORT مع عناوين Bold ============
+
   const handleDownloadPDF = () => {
     if (!result) return;
+
     const doc = new jsPDF();
-    const margin = 15;
+    const margin = 20;
     const pageWidth = doc.internal.pageSize.getWidth();
-    const splitText = doc.splitTextToSize(result.corrected_optimized_resume.plain_text, pageWidth - margin * 2);
+    const usableWidth = pageWidth - margin * 2;
     let y = margin;
-    for (const line of splitText) {
-      if (y > doc.internal.pageSize.getHeight() - margin) {
-        doc.addPage();
-        y = margin;
+
+    const lines = result.corrected_optimized_resume.plain_text.split('\n');
+
+    lines.forEach((line) => {
+      const trimmed = line.trim();
+
+      // سطر فاضي = مسافة بسيطة
+      if (trimmed === '') {
+        y += 4;
+        return;
       }
-      doc.text(line, margin, y);
-      y += 7;
-    }
+
+      // إذا قربنا من نهاية الصفحة → صفحة جديدة
+      const ensureNewPage = () => {
+        if (y > doc.internal.pageSize.getHeight() - margin) {
+          doc.addPage();
+          y = margin;
+        }
+      };
+
+      if (isSectionHeader(line)) {
+        ensureNewPage();
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(13);
+        const headerText = trimmed.toUpperCase();
+        doc.text(headerText, margin, y);
+        y += 8; // مسافة بعد العنوان
+      } else {
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(10);
+        const wrapped = doc.splitTextToSize(line, usableWidth);
+        wrapped.forEach((wLine: string) => {
+          ensureNewPage();
+          doc.text(wLine, margin, y);
+          y += 5;
+        });
+      }
+    });
+
     doc.save('ATS_Audited_Resume.pdf');
   };
 
+  // ============ WORD EXPORT مع عناوين Bold ============
+
   const handleDownloadWord = async () => {
     if (!result) return;
+
     const lines = result.corrected_optimized_resume.plain_text.split('\n');
-    const doc = new Document({
-      sections: [{
-        properties: {},
-        children: lines.map(line => new Paragraph({
-          children: [new TextRun({ text: line, font: "Calibri", size: 20 })],
-        })),
-      }],
+
+    const paragraphs = lines.map((line) => {
+      const trimmed = line.trim();
+
+      // سطر فاضي
+      if (trimmed === '') {
+        return new Paragraph({
+          children: [new TextRun({ text: ' ' })]
+        });
+      }
+
+      // عنوان قسم
+      if (isSectionHeader(line)) {
+        return new Paragraph({
+          children: [
+            new TextRun({
+              text: trimmed.toUpperCase(),
+              bold: true,
+              size: 20 // أكبر من النص العادي
+            })
+          ],
+          spacing: {
+            before: 200,
+            after: 100
+          }
+        });
+      }
+
+      // نص عادي / bullets
+      return new Paragraph({
+        children: [
+          new TextRun({
+            text: line,
+            bold: false,
+            size: 22 // تقريباً 11pt
+          })
+        ],
+        spacing: {
+          before: 60,
+          after: 60
+        }
+      });
     });
+
+    const doc = new Document({
+      sections: [
+        {
+          properties: {},
+          children: paragraphs
+        }
+      ]
+    });
+
     const blob = await Packer.toBlob(doc);
     saveAs(blob, 'ATS_Audited_Resume.docx');
   };
@@ -194,13 +331,40 @@ export default function App() {
   const radarData = useMemo(() => {
     if (!result) return [];
     return [
-      { subject: 'Structure', A: result.corrected_before_optimization.scores.ats_structure, B: result.corrected_after_optimization.scores.ats_structure, fullMark: 100 },
-      { subject: 'Keywords', A: result.corrected_before_optimization.scores.keyword_match, B: result.corrected_after_optimization.scores.keyword_match, fullMark: 100 },
-      { subject: 'Impact', A: result.corrected_before_optimization.scores.experience_impact, B: result.corrected_after_optimization.scores.experience_impact, fullMark: 100 },
-      { subject: 'Format', A: result.corrected_before_optimization.scores.formatting_readability, B: result.corrected_after_optimization.scores.formatting_readability, fullMark: 100 },
-      { subject: 'Alignment', A: result.corrected_before_optimization.scores.seniority_alignment, B: result.corrected_after_optimization.scores.seniority_alignment, fullMark: 100 },
+      {
+        subject: 'Structure',
+        A: result.corrected_before_optimization.scores.ats_structure,
+        B: result.corrected_after_optimization.scores.ats_structure,
+        fullMark: 100
+      },
+      {
+        subject: 'Keywords',
+        A: result.corrected_before_optimization.scores.keyword_match,
+        B: result.corrected_after_optimization.scores.keyword_match,
+        fullMark: 100
+      },
+      {
+        subject: 'Impact',
+        A: result.corrected_before_optimization.scores.experience_impact,
+        B: result.corrected_after_optimization.scores.experience_impact,
+        fullMark: 100
+      },
+      {
+        subject: 'Format',
+        A: result.corrected_before_optimization.scores.formatting_readability,
+        B: result.corrected_after_optimization.scores.formatting_readability,
+        fullMark: 100
+      },
+      {
+        subject: 'Alignment',
+        A: result.corrected_before_optimization.scores.seniority_alignment,
+        B: result.corrected_after_optimization.scores.seniority_alignment,
+        fullMark: 100
+      }
     ];
   }, [result]);
+
+  // ================== UI ==================
 
   return (
     <div className="min-h-screen pb-12 bg-[#f4f7f9]">
@@ -210,7 +374,9 @@ export default function App() {
             <div className="bg-slate-900 p-2 rounded-lg">
               <ShieldCheck className="text-blue-400 w-5 h-5" />
             </div>
-            <h1 className="text-xl font-bold text-slate-900 tracking-tight">ATS <span className="text-blue-600">AUDITOR</span></h1>
+            <h1 className="text-xl font-bold text-slate-900 tracking-tight">
+              ATS <span className="text-blue-600">AUDITOR</span>
+            </h1>
           </div>
           <div className="hidden sm:flex items-center gap-4 text-xs font-bold text-slate-400 uppercase tracking-widest">
             <span className="text-blue-600">Strict Validation</span>
@@ -220,7 +386,10 @@ export default function App() {
             <span>Logic v4.2</span>
           </div>
           {status === 'completed' && (
-            <button onClick={handleReset} className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors">
+            <button
+              onClick={handleReset}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors"
+            >
               <RotateCcw className="w-4 h-4" /> Reset Audit
             </button>
           )}
@@ -241,19 +410,22 @@ export default function App() {
                   <span className="text-blue-600">AI Optimism.</span>
                 </h2>
                 <p className="text-lg text-slate-600 leading-relaxed max-w-xl">
-                  Most optimizers inflate scores. We don't. Our Auditor applies strict penalties for 
-                  parsing errors, generic content, and formatting traps that actual recruiters reject.
+                  Our Auditor applies strict penalties for
+                  parsing errors and generic content that recruiters reject.
                 </p>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 {[
-                  { icon: FileSearch, title: "Penalty Audit", desc: "Markdown & symbol check" },
-                  { icon: Target, title: "Impact Logic", desc: "Quantified results only" },
-                  { icon: Zap, title: "Word Density", desc: "500-700 word precision" },
-                  { icon: FileSearch, title: "Trust Scoring", desc: "Conservative confidence" },
+                  { icon: FileSearch, title: 'Penalty Audit', desc: 'Markdown & symbol check' },
+                  { icon: Target, title: 'Impact Logic', desc: 'Quantified results only' },
+                  { icon: Zap, title: 'Word Density', desc: 'Precise word counts' },
+                  { icon: FileSearch, title: 'Trust Scoring', desc: 'Conservative confidence' }
                 ].map((item, idx) => (
-                  <div key={idx} className="p-4 bg-white border border-slate-200 rounded-xl shadow-sm">
+                  <div
+                    key={idx}
+                    className="p-4 bg-white border border-slate-200 rounded-xl shadow-sm"
+                  >
                     <item.icon className="w-6 h-6 text-blue-600 mb-2" />
                     <h3 className="font-bold text-slate-900 text-sm">{item.title}</h3>
                     <p className="text-xs text-slate-500">{item.desc}</p>
@@ -263,8 +435,21 @@ export default function App() {
             </div>
 
             <div className="space-y-6">
-              <div onClick={() => fileInputRef.current?.click()} className={`relative group border-2 border-dashed rounded-2xl p-8 transition-all cursor-pointer flex flex-col items-center justify-center gap-4 ${extracting ? 'bg-slate-50 border-blue-300' : 'bg-white border-slate-200 hover:border-blue-400 hover:bg-blue-50/50'}`}>
-                <input type="file" ref={fileInputRef} className="hidden" accept=".pdf,.docx,.txt" onChange={handleFileUpload} />
+              <div
+                onClick={() => fileInputRef.current?.click()}
+                className={`relative group border-2 border-dashed rounded-2xl p-8 transition-all cursor-pointer flex flex-col items-center justify-center gap-4 ${
+                  extracting
+                    ? 'bg-slate-50 border-blue-300'
+                    : 'bg-white border-slate-200 hover:border-blue-400 hover:bg-blue-50/50'
+                }`}
+              >
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  className="hidden"
+                  accept=".pdf,.docx,.txt"
+                  onChange={handleFileUpload}
+                />
                 {extracting ? (
                   <div className="flex flex-col items-center gap-2">
                     <Loader2 className="w-10 h-10 text-blue-600 animate-spin" />
@@ -275,14 +460,18 @@ export default function App() {
                     <FileText className="w-10 h-10 text-slate-300 mx-auto mb-4" />
                     <p className="font-bold text-slate-900 text-lg">Upload Original Resume</p>
                     <p className="text-sm text-slate-500 mb-4">PDF, Word, or Text (Max 2MB)</p>
-                    <span className="px-6 py-2 bg-slate-900 text-white text-sm font-bold rounded-lg group-hover:bg-blue-600 transition-colors">Select File</span>
+                    <span className="px-6 py-2 bg-slate-900 text-white text-sm font-bold rounded-lg group-hover:bg-blue-600 transition-colors">
+                      Select File
+                    </span>
                   </div>
                 )}
               </div>
 
               <div className="bg-white border border-slate-200 rounded-2xl shadow-xl p-6">
-                <label className="block text-sm font-bold text-slate-700 mb-2 uppercase tracking-wider">Review Content</label>
-                <textarea 
+                <label className="block text-sm font-bold text-slate-700 mb-2 uppercase tracking-wider">
+                  Review Content
+                </label>
+                <textarea
                   className="w-full h-64 p-4 border border-slate-100 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none font-mono text-sm bg-slate-50 text-slate-600"
                   placeholder="Paste resume content here for audit..."
                   value={resumeText}
@@ -293,11 +482,21 @@ export default function App() {
                     <div className="flex items-center gap-2 font-bold text-sm">
                       <AlertCircle className="w-4 h-4" /> {error.message}
                     </div>
-                    {error.hint && <p className="text-xs text-rose-500 ml-6 italic">{error.hint}</p>}
-                    {error.tech && <p className="mt-2 text-[10px] text-rose-400 font-mono">Error trace: {error.tech}</p>}
+                    {error.hint && (
+                      <p className="text-xs text-rose-500 ml-6 italic">{error.hint}</p>
+                    )}
+                    {error.tech && (
+                      <p className="mt-2 text-[10px] text-rose-400 font-mono">
+                        Error trace: {error.tech}
+                      </p>
+                    )}
                   </div>
                 )}
-                <button onClick={handleProcess} disabled={!resumeText.trim() || extracting} className="w-full mt-4 py-4 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-bold rounded-xl transition-all shadow-lg flex items-center justify-center gap-2">
+                <button
+                  onClick={handleProcess}
+                  disabled={!resumeText.trim() || extracting}
+                  className="w-full mt-4 py-4 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-bold rounded-xl transition-all shadow-lg flex items-center justify-center gap-2"
+                >
                   Initiate Quality Audit <ChevronRight className="w-5 h-5" />
                 </button>
               </div>
@@ -312,10 +511,14 @@ export default function App() {
               <ShieldCheck className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 text-blue-600" />
             </div>
             <div className="space-y-2">
-              <h3 className="text-2xl font-bold text-slate-900 uppercase tracking-tight">Audit in Progress</h3>
-              <p className="text-slate-500 font-medium max-w-md">Scrubbing text for AI-generated artifacts, markdown code blocks, and score inflation...</p>
+              <h3 className="text-2xl font-bold text-slate-900 uppercase tracking-tight">
+                Audit in Progress
+              </h3>
+              <p className="text-slate-500 font-medium max-w-md">
+                Scrubbing text for AI-generated artifacts and ensuring zero-markdown compliance...
+              </p>
             </div>
-            <button 
+            <button
               onClick={handleCancelAnalysis}
               className="px-6 py-2 border border-slate-200 text-slate-500 text-sm font-bold rounded-lg hover:bg-slate-50 transition-colors flex items-center gap-2"
             >
@@ -332,16 +535,20 @@ export default function App() {
             <h3 className="text-2xl font-black text-slate-900 mb-4">Audit Failed</h3>
             <div className="text-slate-600 space-y-4 mb-8">
               <p className="font-bold">{error?.message}</p>
-              {error?.tech && <p className="text-xs text-rose-400 font-mono">Technical ID: {error.tech}</p>}
               {error?.hint && (
                 <div className="bg-slate-50 p-4 rounded-xl text-xs text-left border border-slate-100">
-                  <span className="font-bold text-slate-900 block mb-1 uppercase tracking-widest">System Hint</span>
+                  <span className="font-bold text-slate-900 block mb-1 uppercase tracking-widest">
+                    System Hint
+                  </span>
                   {error.hint}
                 </div>
               )}
             </div>
             <div className="flex gap-4 justify-center">
-              <button onClick={() => setStatus('idle')} className="px-8 py-3 bg-slate-900 text-white font-bold rounded-xl hover:bg-black transition-colors">
+              <button
+                onClick={() => setStatus('idle')}
+                className="px-8 py-3 bg-slate-900 text-white font-bold rounded-xl hover:bg-black transition-colors"
+              >
                 Return to Editor
               </button>
             </div>
@@ -354,7 +561,7 @@ export default function App() {
               <div className="absolute top-0 right-0 p-8 opacity-10">
                 <ShieldCheck className="w-64 h-64" />
               </div>
-              <div className="relative z-10 grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div className="relative z-10 grid grid-cols-1 lg:grid-cols-3 gap-8">
                 <div className="lg:col-span-2 space-y-4">
                   <div className="inline-flex items-center gap-2 px-3 py-1 bg-blue-500/20 text-blue-300 text-xs font-black uppercase tracking-[0.2em] rounded">
                     Audit Verdict
@@ -365,18 +572,28 @@ export default function App() {
                   </p>
                   <div className="flex flex-wrap gap-4 pt-4">
                     <div className="bg-white/5 border border-white/10 p-4 rounded-2xl">
-                      <span className="block text-xs font-bold text-slate-500 uppercase mb-1">Enterprise Readiness</span>
-                      <span className="text-emerald-400 font-bold">{result.credibility_verdict.enterprise_readiness}</span>
+                      <span className="block text-xs font-bold text-slate-500 uppercase mb-1">
+                        Enterprise Readiness
+                      </span>
+                      <span className="text-emerald-400 font-bold">
+                        {result.credibility_verdict.enterprise_readiness}
+                      </span>
                     </div>
                     <div className="bg-white/5 border border-white/10 p-4 rounded-2xl">
-                      <span className="block text-xs font-bold text-slate-500 uppercase mb-1">Trust Level</span>
-                      <span className="text-blue-400 font-bold uppercase tracking-widest">{result.credibility_verdict.trust_level}</span>
+                      <span className="block text-xs font-bold text-slate-500 uppercase mb-1">
+                        Trust Level
+                      </span>
+                      <span className="text-blue-400 font-bold uppercase tracking-widest">
+                        {result.credibility_verdict.trust_level}
+                      </span>
                     </div>
                   </div>
                 </div>
                 <div className="bg-blue-600 rounded-2xl p-6 flex flex-col justify-between">
                   <div>
-                    <span className="text-blue-200 text-xs font-black uppercase tracking-widest">Audited Score</span>
+                    <span className="text-blue-200 text-xs font-black uppercase tracking-widest">
+                      Audited Score
+                    </span>
                     <div className="text-6xl font-black text-white mt-1">
                       {result.corrected_after_optimization.final_ats_score}
                     </div>
@@ -384,7 +601,12 @@ export default function App() {
                   <div className="mt-4 pt-4 border-t border-white/20">
                     <span className="text-blue-200 text-xs font-bold">Confidence Level</span>
                     <div className="w-full bg-blue-900 h-2 mt-2 rounded-full overflow-hidden">
-                      <div className="bg-white h-full transition-all duration-1000" style={{ width: `${result.corrected_after_optimization.ats_confidence_level}%` }}></div>
+                      <div
+                        className="bg-white h-full transition-all duration-1000"
+                        style={{
+                          width: `${result.corrected_after_optimization.ats_confidence_level}%`
+                        }}
+                      ></div>
                     </div>
                     <div className="text-right text-xs font-bold text-white mt-1">
                       {result.corrected_after_optimization.ats_confidence_level}%
@@ -404,7 +626,9 @@ export default function App() {
                     {result.audit_findings.map((find, idx) => (
                       <div key={idx} className="space-y-2 border-l-2 border-amber-500 pl-4">
                         <h4 className="font-black text-slate-900 text-sm">{find.issue}</h4>
-                        <p className="text-xs text-slate-500 italic">"{find.why_it_is_a_problem}"</p>
+                        <p className="text-xs text-slate-500 italic">
+                          "{find.why_it_is_a_problem}"
+                        </p>
                         <div className="bg-emerald-50 text-emerald-700 text-[10px] font-bold px-2 py-1 rounded inline-block uppercase">
                           Action: {find.correction_applied}
                         </div>
@@ -414,18 +638,39 @@ export default function App() {
                 </div>
 
                 <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-                   <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-6">Comparative Logic</h3>
-                   <div className="h-64">
+                  <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-6">
+                    Comparative Logic
+                  </h3>
+                  <div className="h-64">
                     <ResponsiveContainer width="100%" height="100%">
                       <RadarChart cx="50%" cy="50%" outerRadius="80%" data={radarData}>
                         <PolarGrid stroke="#e2e8f0" />
-                        <PolarAngleAxis dataKey="subject" tick={{ fontSize: 10, fill: '#64748b', fontWeight: 'bold' }} />
-                        <Radar name="Original" dataKey="A" stroke="#94a3b8" fill="#94a3b8" fillOpacity={0.2} />
-                        <Radar name="Audited" dataKey="B" stroke="#2563eb" fill="#2563eb" fillOpacity={0.4} />
+                        <PolarAngleAxis
+                          dataKey="subject"
+                          tick={{
+                            fontSize: 10,
+                            fill: '#64748b',
+                            fontWeight: 'bold'
+                          }}
+                        />
+                        <Radar
+                          name="Original"
+                          dataKey="A"
+                          stroke="#94a3b8"
+                          fill="#94a3b8"
+                          fillOpacity={0.2}
+                        />
+                        <Radar
+                          name="Audited"
+                          dataKey="B"
+                          stroke="#2563eb"
+                          fill="#2563eb"
+                          fillOpacity={0.4}
+                        />
                         <Legend iconType="circle" />
                       </RadarChart>
                     </ResponsiveContainer>
-                   </div>
+                  </div>
                 </div>
               </div>
 
@@ -434,58 +679,92 @@ export default function App() {
                   <div className="px-6 py-4 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <CheckCircle2 className="w-5 h-5 text-blue-600" />
-                      <h3 className="font-black text-slate-900 uppercase tracking-widest text-xs">ATS-Safe Resume</h3>
+                      <h3 className="font-black text-slate-900 uppercase tracking-widest text-xs">
+                        ATS-Safe Resume
+                      </h3>
                     </div>
                     <div className="flex items-center gap-2">
-                      <button onClick={handleCopy} className="p-2 hover:bg-white rounded-lg transition-colors border border-transparent hover:border-slate-200">
-                        {copied ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4 text-slate-400" />}
+                      <button
+                        onClick={handleCopy}
+                        className="p-2 hover:bg-white rounded-lg transition-colors border border-transparent hover:border-slate-200"
+                      >
+                        {copied ? (
+                          <Check className="w-4 h-4 text-emerald-500" />
+                        ) : (
+                          <Copy className="w-4 h-4 text-slate-400" />
+                        )}
                       </button>
-                      <button onClick={handleDownloadPDF} className="flex items-center gap-2 px-3 py-1.5 bg-slate-900 text-white rounded-lg text-sm font-bold hover:bg-black transition-all">
+                      <button
+                        onClick={handleDownloadPDF}
+                        className="flex items-center gap-2 px-3 py-1.5 bg-slate-900 text-white rounded-lg text-sm font-bold hover:bg-black transition-all"
+                      >
                         <FileDown className="w-4 h-4" /> PDF
                       </button>
-                      <button onClick={handleDownloadWord} className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700 transition-all">
+                      <button
+                        onClick={handleDownloadWord}
+                        className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700 transition-all"
+                      >
                         <Download className="w-4 h-4" /> DOCX
                       </button>
                     </div>
                   </div>
-                  <div className="p-10 bg-white">
-                    <pre className="whitespace-pre-wrap font-sans text-slate-700 text-[13px] leading-relaxed selection:bg-blue-100 outline-none">
-                      {result.corrected_optimized_resume.plain_text}
-                    </pre>
+
+                  <div className="p-8 sm:p-12 bg-white">
+                    <div className="font-sans text-slate-700 text-sm leading-relaxed selection:bg-blue-100 outline-none">
+                      {renderResumeText(result.corrected_optimized_resume.plain_text)}
+                    </div>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                   <div className="bg-white border border-slate-200 rounded-2xl p-6">
-                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4">Original Scoring</h4>
+                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4">
+                      Original Scoring
+                    </h4>
                     <div className="space-y-4">
-                      {Object.entries(result.corrected_before_optimization.scores).map(([key, val]) => (
-                        <div key={key}>
-                          <div className="flex justify-between text-[11px] font-bold text-slate-500 mb-1">
-                            <span className="uppercase tracking-widest">{key.replace('_', ' ')}</span>
-                            <span>{val}%</span>
+                      {Object.entries(result.corrected_before_optimization.scores).map(
+                        ([key, val]) => (
+                          <div key={key}>
+                            <div className="flex justify-between text-[11px] font-bold text-slate-500 mb-1">
+                              <span className="uppercase tracking-widest">
+                                {key.replace('_', ' ')}
+                              </span>
+                              <span>{val}%</span>
+                            </div>
+                            <div className="h-1 bg-slate-100 rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-slate-300 rounded-full"
+                                style={{ width: `${val}%` }}
+                              ></div>
+                            </div>
                           </div>
-                          <div className="h-1 bg-slate-100 rounded-full overflow-hidden">
-                            <div className="h-full bg-slate-300 rounded-full" style={{ width: `${val}%` }}></div>
-                          </div>
-                        </div>
-                      ))}
+                        )
+                      )}
                     </div>
                   </div>
                   <div className="bg-white border border-blue-100 rounded-2xl p-6">
-                    <h4 className="text-[10px] font-black text-blue-400 uppercase tracking-[0.2em] mb-4">Audited Scoring</h4>
+                    <h4 className="text-[10px] font-black text-blue-400 uppercase tracking-[0.2em] mb-4">
+                      Audited Scoring
+                    </h4>
                     <div className="space-y-4">
-                      {Object.entries(result.corrected_after_optimization.scores).map(([key, val]) => (
-                        <div key={key}>
-                          <div className="flex justify-between text-[11px] font-bold text-slate-900 mb-1">
-                            <span className="uppercase tracking-widest">{key.replace('_', ' ')}</span>
-                            <span>{val}%</span>
+                      {Object.entries(result.corrected_after_optimization.scores).map(
+                        ([key, val]) => (
+                          <div key={key}>
+                            <div className="flex justify-between text-[11px] font-bold text-slate-900 mb-1">
+                              <span className="uppercase tracking-widest">
+                                {key.replace('_', ' ')}
+                              </span>
+                              <span>{val}%</span>
+                            </div>
+                            <div className="h-1 bg-blue-50 rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-blue-600 rounded-full"
+                                style={{ width: `${val}%` }}
+                              ></div>
+                            </div>
                           </div>
-                          <div className="h-1 bg-blue-50 rounded-full overflow-hidden">
-                            <div className="h-full bg-blue-600 rounded-full" style={{ width: `${val}%` }}></div>
-                          </div>
-                        </div>
-                      ))}
+                        )
+                      )}
                     </div>
                   </div>
                 </div>
@@ -496,10 +775,10 @@ export default function App() {
       </main>
 
       <footer className="max-w-7xl mx-auto px-4 mt-20 border-t pt-8 pb-12 flex flex-col md:flex-row justify-between items-center text-slate-400 text-[10px] font-bold uppercase tracking-widest gap-4">
-        <p>© 2024 ATS PRO Enterprise Systems • Internal Quality Control Tool</p>
+        <p>© 2025 ATS PRO Enterprise Systems • Internal Quality Control Tool</p>
         <div className="flex gap-6">
           <span>Logic v4.2.11</span>
-          <span>Compliance: ISO/ATS-2024</span>
+          <span>Compliance: ISO/ATS-2025</span>
         </div>
       </footer>
     </div>
