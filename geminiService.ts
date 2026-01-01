@@ -3,42 +3,45 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { AnalysisResult } from "./types.ts";
 
 /**
- * Analyzes and optimizes a resume using the strict ATS Quality Control Auditor logic.
- * Requires process.env.API_KEY to be populated (usually via VITE_API_KEY in Vite).
+ * Enterprise ATS Auditor Service
+ * Performs deep analysis using Gemini-3-flash-preview.
  */
 export const analyzeResume = async (
   resumeText: string, 
   signal?: AbortSignal
 ): Promise<AnalysisResult> => {
-  // المفتاح يتم سحبه من process.env الذي قمنا بتهيئته في index.tsx
+  // Access the API key from the environment bridge
   const apiKey = process.env.API_KEY;
   
-  if (!apiKey || apiKey === "undefined" || apiKey.length < 10) {
-    const errorMsg = "API_KEY_MISSING_IN_BROWSER";
-    console.error("Vite/Vercel Error: Ensure your environment variable is named VITE_API_KEY in Vercel settings.");
-    throw new Error(errorMsg);
+  if (!apiKey || apiKey === "undefined" || apiKey.length < 5) {
+    console.error("ATS Auditor: API_KEY is missing. Check your environment variables.");
+    throw new Error("API_KEY_MISSING_IN_BROWSER");
   }
 
-  // استخدام المفتاح مباشرة كما تطلب التعليمات
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
-  const cleanedInput = resumeText.slice(0, 12000);
+  // Use new GoogleGenAI instance as per guidelines
+  const ai = new GoogleGenAI({ apiKey: apiKey });
+  
+  // Truncate input to stay within reasonable token limits for a fast audit
+  const cleanedInput = resumeText.slice(0, 15000);
 
   try {
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: `You are an Enterprise-grade ATS Quality Control Auditor. 
-        Analyze, score, and rewrite this resume for maximum recruiter compatibility.
+      contents: `You are an Enterprise ATS Quality Control Auditor.
+        Perform a strict audit on this resume and return a structured JSON report.
         
         RESUME TEXT:
         """
         ${cleanedInput}
         """`,
       config: {
-        systemInstruction: `You are an elite ATS Quality Control Auditor.
-        1. REWRITE: Transform all experience into Action-Context-Result (ACR) format.
-        2. CLEAN: Remove all markdown symbols (like **, #, __) from the 'plain_text' resume field.
-        3. AUDIT: Be critical. If the resume lacks metrics, give a low 'experience_impact' score.
-        4. FORMAT: Return the response strictly as JSON.`,
+        systemInstruction: `You are an elite Enterprise ATS Quality Control Auditor.
+        Mission: Eliminate "AI fluff", enforce metrics-driven experience, and ensure zero-error parsing.
+        Rules:
+        1. REWRITE: All bullets must follow the Action-Context-Result (ACR) model.
+        2. CLEAN: The 'plain_text' field must be clean of markdown (no **, #, __).
+        3. HONESTY: Provide conservative scores. Rejection risk should be 'High' if metrics are missing.
+        4. FORMAT: Return strict JSON only.`,
         temperature: 0.1,
         responseMimeType: "application/json",
         responseSchema: {
@@ -137,11 +140,6 @@ export const analyzeResume = async (
     return JSON.parse(rawText.replace(/```json|```/g, "").trim());
   } catch (error: any) {
     console.error("Gemini API Error:", error);
-    const errorMsg = error.message || "Unknown API error";
-    
-    if (errorMsg.includes("429")) throw new Error("Rate limit exceeded. Please wait 60 seconds.");
-    if (errorMsg.includes("403")) throw new Error("API Key permissions issue. Ensure VITE_API_KEY is correct in Vercel.");
-    
-    throw new Error(errorMsg);
+    throw error;
   }
 };

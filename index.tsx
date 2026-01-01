@@ -1,31 +1,37 @@
 
 /**
- * CRITICAL VITE POLYFILL
- * This block must run before ANY other imports.
- * It maps Vite's import.meta.env to process.env for Gemini SDK compatibility.
+ * ATS AUDITOR - ENTRY POINT
+ * This file initializes the React application and ensures that the Google Gemini SDK
+ * has access to the required API_KEY via the process.env polyfill.
  */
+
+// Establish the process.env bridge for the @google/genai SDK
 (function() {
-  const windowObj = window as any;
+  const win = window as any;
   
-  // Initialize process.env structure
-  if (typeof windowObj.process === 'undefined') {
-    windowObj.process = { env: {} };
-  } else if (!windowObj.process.env) {
-    windowObj.process.env = {};
-  }
+  // Initialize the process.env object if it doesn't exist
+  win.process = win.process || {};
+  win.process.env = win.process.env || {};
 
-  // Explicitly grab the key from Vite's environment
-  // Vite requires VITE_ prefix to expose variables to the client
-  // @ts-ignore
-  const viteEnv = (import.meta as any).env || {};
-  const apiKey = viteEnv.VITE_API_KEY || viteEnv.API_KEY || '';
-
-  // Set the API_KEY where the Gemini SDK expects it
-  if (apiKey) {
-    windowObj.process.env.API_KEY = apiKey;
-    console.log("ATS Auditor: API Key detected and mapped.");
-  } else {
-    console.warn("ATS Auditor: No API Key found in VITE_API_KEY. Check Vercel settings.");
+  try {
+    /**
+     * VITE ENVIRONMENT BRIDGE
+     * We use optional chaining and a fallback check to prevent the 
+     * "Cannot read properties of undefined (reading 'VITE_API_KEY')" error.
+     */
+    const meta = import.meta as any;
+    const env = meta?.env || {};
+    
+    // Attempt to prioritize VITE_API_KEY (recommended for Vite/Vercel)
+    const key = env.VITE_API_KEY || env.API_KEY || win.process.env.API_KEY;
+    
+    if (key && key !== 'undefined') {
+      win.process.env.API_KEY = key;
+      console.log("ATS Auditor: System environment initialized.");
+    }
+  } catch (e) {
+    // Fail gracefully if environment metadata is inaccessible
+    console.warn("ATS Auditor: Environment metadata check skipped.");
   }
 })();
 
