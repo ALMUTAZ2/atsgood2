@@ -1,4 +1,3 @@
-
 import { GoogleGenAI, Type } from "@google/genai";
 import { AnalysisResult } from "./types.ts";
 
@@ -10,14 +9,22 @@ export const analyzeResume = async (
   resumeText: string, 
   signal?: AbortSignal
 ): Promise<AnalysisResult> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const apiKey = process.env.API_KEY;
+  
+  // Explicit check for API Key to help user debug Vercel environment variables
+  if (!apiKey || apiKey === "undefined" || apiKey.length < 10) {
+    console.error("CRITICAL: API_KEY is missing from environment variables.");
+    throw new Error("API_KEY_MISSING");
+  }
+
+  const ai = new GoogleGenAI({ apiKey });
   
   // Truncate extremely long inputs to avoid token issues.
   const cleanedInput = resumeText.slice(0, 12000);
 
   const response = await ai.models.generateContent({
     // Use gemini-3-pro-preview for complex reasoning tasks.
-    model: 'gemini-3-pro-preview',
+    model: 'gemini-2.0-flash-lite',
     contents: `You are an ATS Quality Control Auditor and Resume Scoring Validator. 
         Your task is to process the resume below exactly as a modern ATS platform would, enforcing realism and credibility.
 
