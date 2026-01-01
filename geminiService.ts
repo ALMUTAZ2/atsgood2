@@ -1,9 +1,10 @@
+
 import { GoogleGenAI, Type } from "@google/genai";
 import { AnalysisResult } from "./types.ts";
 
 /**
  * Analyzes and optimizes a resume using the strict ATS Quality Control Auditor logic.
- * Supports cancellation via AbortSignal.
+ * Uses Gemini 3 Pro with thinking capabilities for enterprise-grade reasoning.
  */
 export const analyzeResume = async (
   resumeText: string, 
@@ -11,143 +12,135 @@ export const analyzeResume = async (
 ): Promise<AnalysisResult> => {
   const apiKey = process.env.API_KEY;
   
-  // Explicit check for API Key to help user debug Vercel environment variables
+  // Validate API Key presence
   if (!apiKey || apiKey === "undefined" || apiKey.length < 10) {
-    console.error("CRITICAL: API_KEY is missing from environment variables.");
+    console.error("CRITICAL: API_KEY is missing. Ensure it is set in your environment variables.");
     throw new Error("API_KEY_MISSING");
   }
 
+  // Create instance right before use to ensure latest API key
   const ai = new GoogleGenAI({ apiKey });
   
-  // Truncate extremely long inputs to avoid token issues.
-  const cleanedInput = resumeText.slice(0, 12000);
+  // Clean and limit input to prevent token overflow while maintaining context
+  const cleanedInput = resumeText.slice(0, 19000);
 
-  const response = await ai.models.generateContent({
-    // Use gemini-3-pro-preview for complex reasoning tasks.
-    model: 'gemini-2.0-flash-lite',
-    contents: `You are an ATS Quality Control Auditor and Resume Scoring Validator. 
-        Your task is to process the resume below exactly as a modern ATS platform would, enforcing realism and credibility.
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-pro-preview',
+      contents: `You are an Enterprise-grade ATS Quality Control Auditor and Senior International Recruiter. 
+        Your task is to audit and optimize the following resume for maximum hireability in Fortune 500 companies.
 
-        MANDATORY AUDIT OBJECTIVES:
-        1. Evaluate the original resume with strict penalties for markdown, generic content, and poor formatting.
-        2. Calculate scores using the weighted formula: (Structure*0.25 + Keywords*0.25 + Impact*0.20 + Formatting*0.15 + Seniority*0.15).
-        3. Optimize the resume to be ATS-safe plain text (NO markdown, NO icons, NO symbols).
-        4. Optimization constraint: 500-700 words, structured for 2 pages.
-        5. Calculate a conservative ATS_CONFIDENCE_LEVEL (0-100).
-
-        STRICT RULES:
-        - Markdown formatting (**, ##) inside resume text REDUCES formatting scores.
-        - Score improvements > 15 points require massive structural changes.
-        - Plain text only for the optimized resume.
-
-        RESUME TO PROCESS:
+        RESUME CONTENT:
         """
         ${cleanedInput}
         """`,
-    config: {
-      temperature: 0,
-      seed: 42,
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          audit_findings: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                issue: { type: Type.STRING },
-                why_it_is_a_problem: { type: Type.STRING },
-                ats_real_world_impact: { type: Type.STRING },
-                correction_applied: { type: Type.STRING }
-              },
-              required: ["issue", "why_it_is_a_problem", "ats_real_world_impact", "correction_applied"]
-            }
-          },
-          corrected_before_optimization: {
-            type: Type.OBJECT,
-            properties: {
-              scores: {
+      config: {
+        systemInstruction: `You are a strict ATS Auditor. 
+        1. Penalize any markdown formatting (like **, ##) or special symbols in the text.
+        2. Focus on "Impact Logic" - every bullet point must quantify achievements.
+        3. Output MUST be a valid JSON object matching the requested schema.
+        4. The optimized resume should be PLAIN TEXT only, perfectly structured for parsers.`,
+        temperature: 0.1, 
+        thinkingConfig: { thinkingBudget: 4000 }, // Enable reasoning for complex auditing
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            audit_findings: {
+              type: Type.ARRAY,
+              items: {
                 type: Type.OBJECT,
                 properties: {
-                  ats_structure: { type: Type.NUMBER },
-                  keyword_match: { type: Type.NUMBER },
-                  experience_impact: { type: Type.NUMBER },
-                  formatting_readability: { type: Type.NUMBER },
-                  seniority_alignment: { type: Type.NUMBER }
+                  issue: { type: Type.STRING },
+                  why_it_is_a_problem: { type: Type.STRING },
+                  ats_real_world_impact: { type: Type.STRING },
+                  correction_applied: { type: Type.STRING }
                 },
-                required: ["ats_structure", "keyword_match", "experience_impact", "formatting_readability", "seniority_alignment"]
-              },
-              final_ats_score: { type: Type.NUMBER },
-              ats_confidence_level: { type: Type.NUMBER },
-              ats_rejection_risk: { type: Type.STRING }
-            },
-            required: ["scores", "final_ats_score", "ats_confidence_level", "ats_rejection_risk"]
-          },
-          corrected_optimized_resume: {
-            type: Type.OBJECT,
-            properties: {
-              plain_text: { type: Type.STRING },
-              sections: {
-                type: Type.OBJECT,
-                properties: {
-                  summary: { type: Type.STRING },
-                  experience: { type: Type.STRING },
-                  skills: { type: Type.STRING },
-                  education: { type: Type.STRING }
-                },
-                required: ["summary", "experience", "skills", "education"]
+                required: ["issue", "why_it_is_a_problem", "ats_real_world_impact", "correction_applied"]
               }
             },
-            required: ["plain_text", "sections"]
-          },
-          corrected_after_optimization: {
-            type: Type.OBJECT,
-            properties: {
-              scores: {
-                type: Type.OBJECT,
-                properties: {
-                  ats_structure: { type: Type.NUMBER },
-                  keyword_match: { type: Type.NUMBER },
-                  experience_impact: { type: Type.NUMBER },
-                  formatting_readability: { type: Type.NUMBER },
-                  seniority_alignment: { type: Type.NUMBER }
+            corrected_before_optimization: {
+              type: Type.OBJECT,
+              properties: {
+                scores: {
+                  type: Type.OBJECT,
+                  properties: {
+                    ats_structure: { type: Type.NUMBER },
+                    keyword_match: { type: Type.NUMBER },
+                    experience_impact: { type: Type.NUMBER },
+                    formatting_readability: { type: Type.NUMBER },
+                    seniority_alignment: { type: Type.NUMBER }
+                  },
+                  required: ["ats_structure", "keyword_match", "experience_impact", "formatting_readability", "seniority_alignment"]
                 },
-                required: ["ats_structure", "keyword_match", "experience_impact", "formatting_readability", "seniority_alignment"]
+                final_ats_score: { type: Type.NUMBER },
+                ats_confidence_level: { type: Type.NUMBER },
+                ats_rejection_risk: { type: Type.STRING }
               },
-              final_ats_score: { type: Type.NUMBER },
-              ats_confidence_level: { type: Type.NUMBER },
-              ats_rejection_risk: { type: Type.STRING }
+              required: ["scores", "final_ats_score", "ats_confidence_level", "ats_rejection_risk"]
             },
-            required: ["scores", "final_ats_score", "ats_confidence_level", "ats_rejection_risk"]
+            corrected_optimized_resume: {
+              type: Type.OBJECT,
+              properties: {
+                plain_text: { type: Type.STRING },
+                sections: {
+                  type: Type.OBJECT,
+                  properties: {
+                    summary: { type: Type.STRING },
+                    experience: { type: Type.STRING },
+                    skills: { type: Type.STRING },
+                    education: { type: Type.STRING }
+                  },
+                  required: ["summary", "experience", "skills", "education"]
+                }
+              },
+              required: ["plain_text", "sections"]
+            },
+            corrected_after_optimization: {
+              type: Type.OBJECT,
+              properties: {
+                scores: {
+                  type: Type.OBJECT,
+                  properties: {
+                    ats_structure: { type: Type.NUMBER },
+                    keyword_match: { type: Type.NUMBER },
+                    experience_impact: { type: Type.NUMBER },
+                    formatting_readability: { type: Type.NUMBER },
+                    seniority_alignment: { type: Type.NUMBER }
+                  },
+                  required: ["ats_structure", "keyword_match", "experience_impact", "formatting_readability", "seniority_alignment"]
+                },
+                final_ats_score: { type: Type.NUMBER },
+                ats_confidence_level: { type: Type.NUMBER },
+                ats_rejection_risk: { type: Type.STRING }
+              },
+              required: ["scores", "final_ats_score", "ats_confidence_level", "ats_rejection_risk"]
+            },
+            credibility_verdict: {
+              type: Type.OBJECT,
+              properties: {
+                score_change_rationale: { type: Type.STRING },
+                trust_level: { type: Type.STRING },
+                enterprise_readiness: { type: Type.STRING }
+              },
+              required: ["score_change_rationale", "trust_level", "enterprise_readiness"]
+            }
           },
-          credibility_verdict: {
-            type: Type.OBJECT,
-            properties: {
-              score_change_rationale: { type: Type.STRING },
-              trust_level: { type: Type.STRING },
-              enterprise_readiness: { type: Type.STRING }
-            },
-            required: ["score_change_rationale", "trust_level", "enterprise_readiness"]
-          }
-        },
-        required: ["audit_findings", "corrected_before_optimization", "corrected_optimized_resume", "corrected_after_optimization", "credibility_verdict"]
+          required: ["audit_findings", "corrected_before_optimization", "corrected_optimized_resume", "corrected_after_optimization", "credibility_verdict"]
+        }
       }
-    }
-  });
+    });
 
-  if (signal?.aborted) {
-    throw new Error("Analysis aborted by user.");
-  }
+    if (signal?.aborted) throw new Error("AbortError");
 
-  const rawText = response.text;
-  if (!rawText) throw new Error("AI returned empty audit data.");
+    const rawText = response.text;
+    if (!rawText) throw new Error("EMPTY_RESPONSE");
 
-  try {
-    const cleanJson = rawText.replace(/^```json\n?/, '').replace(/\n?```$/, '').trim();
+    // Clean JSON response from possible markdown backticks
+    const cleanJson = rawText.replace(/```json|```/g, "").trim();
     return JSON.parse(cleanJson);
-  } catch (err) {
-    console.error("Failed to parse AI response as JSON:", rawText);
-    throw new Error("The Auditor generated an invalid data structure. Please try again.");
+  } catch (error: any) {
+    console.error("Gemini Analysis Failure:", error);
+    throw error;
   }
 };

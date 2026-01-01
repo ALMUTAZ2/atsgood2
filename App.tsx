@@ -35,9 +35,7 @@ import { jsPDF } from 'jspdf';
 import { Document, Packer, Paragraph, TextRun } from 'docx';
 import FileSaver from 'file-saver';
 
-// Robust way to get saveAs from different module formats
 const saveAs = (FileSaver as any).saveAs || (FileSaver as any).default || FileSaver;
-
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://esm.sh/pdfjs-dist@4.10.38/build/pdf.worker.mjs`;
 
 const MAX_FILE_SIZE = 2 * 1024 * 1024;
@@ -67,11 +65,17 @@ export default function App() {
     } catch (err: any) {
       if (err.name === 'AbortError' || err.message?.includes('aborted')) return;
       
-      console.error(err);
-      setError({
-        message: 'The Auditor encountered an issue with your resume text.',
-        hint: 'If you used a PDF, ensure it is not a scanned image. Try pasting raw text directly for better results.'
-      });
+      console.error("Audit processing failed:", err);
+      
+      let message = 'The Auditor encountered an issue with your resume text.';
+      let hint = 'If you used a PDF, ensure it is not a scanned image. Try pasting raw text directly for better results.';
+      
+      if (err.message === "API_KEY_MISSING") {
+        message = "Configuration Error";
+        hint = "The API Key is missing. Please set 'API_KEY' in your Environment Variables (e.g., in Vercel settings).";
+      }
+
+      setError({ message, hint });
       setStatus('error');
     } finally {
       abortControllerRef.current = null;
@@ -131,16 +135,7 @@ export default function App() {
       const page = await pdf.getPage(i);
       const textContent = await page.getTextContent();
       const items = textContent.items as any[];
-      const lines: { [key: number]: string[] } = {};
-      
-      items.forEach(item => {
-        const y = Math.round(item.transform[5]);
-        if (!lines[y]) lines[y] = [];
-        lines[y].push(item.str);
-      });
-      
-      const sortedY = Object.keys(lines).map(Number).sort((a, b) => b - a);
-      const pageText = sortedY.map(y => lines[y].join(' ')).join('\n');
+      const pageText = items.map(item => item.str).join(' ');
       fullText += pageText + '\n\n';
     }
     return fullText;
@@ -333,7 +328,7 @@ export default function App() {
             </div>
             <h3 className="text-2xl font-black text-slate-900 mb-4">Audit Failed</h3>
             <div className="text-slate-600 space-y-4 mb-8">
-              <p>{error?.message}</p>
+              <p className="font-bold">{error?.message}</p>
               {error?.hint && (
                 <div className="bg-slate-50 p-4 rounded-xl text-xs text-left border border-slate-100">
                   <span className="font-bold text-slate-900 block mb-1 uppercase tracking-widest">Recommended Action</span>
