@@ -18,7 +18,10 @@
     "pdfjs-dist": "4.10.38",
     "jspdf": "^2.5.1",
     "docx": "^8.5.0",
-    "file-saver": "^2.0.5"
+    "file-saver": "^2.0.5",
+    "vite": "^7.3.0",
+    "path": "^0.12.7",
+    "@vitejs/plugin-react": "^5.1.2"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
