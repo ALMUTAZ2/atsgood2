@@ -72,9 +72,10 @@ export default function App() {
       let tech = err.message || 'Unknown technical error';
       
       if (err.message === "API_KEY_MISSING_IN_BROWSER") {
-        message = "Vercel Configuration Error";
-        hint = "Vite requires the API Key to be named 'VITE_API_KEY' in Vercel settings. Please rename it, save, and Redeploy.";
-      }
+  message = "Vercel Configuration Error";
+  hint = "Add an environment variable named 'GEMINI_API_KEY' in Vercel → Project Settings → Environment Variables, redeploy the project, then try again.";
+}
+
 
       setError({ message, hint, tech });
       setStatus('error');
