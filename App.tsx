@@ -46,7 +46,7 @@ export default function App() {
   const [extracting, setExtracting] = useState(false);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [copied, setCopied] = useState(false);
-  const [error, setError] = useState<{ message: string; hint?: string } | null>(null);
+  const [error, setError] = useState<{ message: string; hint?: string; tech?: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -69,13 +69,14 @@ export default function App() {
       
       let message = 'The Auditor encountered an issue with your resume text.';
       let hint = 'If you used a PDF, ensure it is not a scanned image. Try pasting raw text directly for better results.';
+      let tech = err.message || 'Unknown technical error';
       
       if (err.message === "API_KEY_MISSING") {
         message = "Configuration Error";
-        hint = "The API Key is missing. Please set 'API_KEY' in your Environment Variables (e.g., in Vercel settings).";
+        hint = "The API Key is not being detected. In Vercel, ensure you added 'API_KEY' to Environment Variables and redeployed.";
       }
 
-      setError({ message, hint });
+      setError({ message, hint, tech });
       setStatus('error');
     } finally {
       abortControllerRef.current = null;
@@ -291,7 +292,8 @@ export default function App() {
                     <div className="flex items-center gap-2 font-bold text-sm">
                       <AlertCircle className="w-4 h-4" /> {error.message}
                     </div>
-                    {error.hint && <p className="text-xs text-rose-500 ml-6">{error.hint}</p>}
+                    {error.hint && <p className="text-xs text-rose-500 ml-6 italic">{error.hint}</p>}
+                    {error.tech && <p className="mt-2 text-[10px] text-rose-400 font-mono">Error trace: {error.tech}</p>}
                   </div>
                 )}
                 <button onClick={handleProcess} disabled={!resumeText.trim() || extracting} className="w-full mt-4 py-4 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-bold rounded-xl transition-all shadow-lg flex items-center justify-center gap-2">
@@ -329,16 +331,17 @@ export default function App() {
             <h3 className="text-2xl font-black text-slate-900 mb-4">Audit Failed</h3>
             <div className="text-slate-600 space-y-4 mb-8">
               <p className="font-bold">{error?.message}</p>
+              {error?.tech && <p className="text-xs text-rose-400 font-mono">Technical ID: {error.tech}</p>}
               {error?.hint && (
                 <div className="bg-slate-50 p-4 rounded-xl text-xs text-left border border-slate-100">
-                  <span className="font-bold text-slate-900 block mb-1 uppercase tracking-widest">Recommended Action</span>
+                  <span className="font-bold text-slate-900 block mb-1 uppercase tracking-widest">System Hint</span>
                   {error.hint}
                 </div>
               )}
             </div>
             <div className="flex gap-4 justify-center">
               <button onClick={() => setStatus('idle')} className="px-8 py-3 bg-slate-900 text-white font-bold rounded-xl hover:bg-black transition-colors">
-                Back to Dashboard
+                Return to Editor
               </button>
             </div>
           </div>
