@@ -10,7 +10,7 @@ export const analyzeResume = async (
   jobDescription?: string,
   signal?: AbortSignal
 ): Promise<AnalysisResult> => {
-  // Read API key (works with Vercel + Vite bridge)
+  // قراءة API key (متوافق مع Vercel + Vite bridge)
   const win = window as any;
   const apiKey =
     (import.meta as any).env?.VITE_API_KEY || win.process?.env?.API_KEY;
@@ -24,7 +24,7 @@ export const analyzeResume = async (
 
   const ai = new GoogleGenAI({ apiKey });
 
-  // نحمي من undefined
+  // حماية من undefined
   const safeResume = typeof resumeText === "string" ? resumeText : "";
   const safeJD = typeof jobDescription === "string" ? jobDescription : "";
 
@@ -38,7 +38,8 @@ JOB DESCRIPTION FOR JOB MATCH ANALYSIS:
 Use this ONLY to:
 - evaluate job_match_analysis
 - understand target role level & keywords
-Do NOT fabricate experience that is not supported by the resume.
+Do NOT copy responsibilities or achievements from the JD into the resume
+unless they are already clearly supported by the resume content.
 
 """
 ${cleanedJD}
@@ -54,10 +55,16 @@ You are a Senior Executive Recruiter and ATS Auditor.
 Your job is to audit and rewrite the following resume into a high-performance, ATS-safe document.
 
 The resume can belong to ANY profession, level, or country. 
-Do NOT assume details that are not supported by the text. You may generalize responsibilities,
-but stay realistic to the role and context.
+Do NOT assume details that are not supported by the text. You may rephrase and reorganize,
+but you MUST NOT invent new responsibilities, projects, tools, certifications, or metrics
+that are not present in the original resume.
 
-TARGET LENGTH: 500–700 words.
+STRICT LENGTH REQUIREMENT:
+- The FINAL rewritten resume (corrected_optimized_resume.plain_text) MUST be between 500 and 700 words (inclusive).
+- Never return fewer than 500 words.
+- Never exceed 700 words.
+- If the original resume is short, you may elaborate sentences ONLY using information
+  that already exists in the resume (no new facts).
 
 Return ONLY JSON that matches the responseSchema. 
 No explanations, no markdown, no extra text.
@@ -74,13 +81,28 @@ You are an elite Enterprise ATS Quality Control Auditor & Global Recruiter.
 
 INPUTS:
 - A resume (always provided).
-- An optional Job Description (JD). If JD is missing or very short, you must still return a valid JSON but with conservative job_match_analysis.
+- An optional Job Description (JD). If JD is missing or very short, you must still return a valid JSON
+  but you may omit job_match_analysis entirely.
 
 MISSION:
 1) Rewrite the resume so it is clear, impact-driven, and ATS-friendly.
-2) If the input is short or poorly written, expand using realistic responsibilities
-   for that role level (junior / mid / senior) without inventing fake achievements.
-3) Every bullet should follow Action–Context–Result (ACR) and use metrics when possible (%, $, time, volume, scale).
+2) You MUST NOT fabricate or invent any new facts:
+   - No new job titles, responsibilities, projects, technologies, certifications, or metrics
+     that are not already directly implied in the original resume.
+   - You may only rephrase, restructure, and clarify existing content.
+
+STRICT LENGTH & INTEGRITY CONSTRAINTS:
+
+1) LENGTH:
+   - corrected_optimized_resume.plain_text MUST contain between 500 and 700 words (inclusive).
+   - If you are about to generate fewer than 500 words, you must elaborate the existing points
+     (using the same underlying facts) until you reach at least 500 words.
+   - Do NOT exceed 700 words.
+
+2) SOURCE OF INFORMATION:
+   - All content in corrected_optimized_resume.plain_text MUST be grounded in the original resume text.
+   - Do NOT copy responsibilities or bullet points from the Job Description into the resume.
+   - JD is ONLY for job_match_analysis, not for creating or inflating experience.
 
 CRITICAL RULES FOR corrected_optimized_resume.plain_text:
 
@@ -116,7 +138,7 @@ CRITICAL RULES FOR corrected_optimized_resume.plain_text:
    - No other bullet symbols.
 
 6) CONTACT INFO:
-   - Always keep it generic and suitable for any user:
+   - Keep it generic and suitable for any user:
      FULL NAME (as given in the resume)
      Optional title (if clear)
      Email: ...
@@ -130,17 +152,14 @@ CRITICAL RULES FOR corrected_optimized_resume.plain_text:
    - The plain_text MUST have multiple lines and blank lines between sections.
 
 JOB MATCH ANALYSIS (job_match_analysis):
-- If a Job Description (JD) is provided and reasonably detailed:
+- If a Job Description (JD) is provided AND reasonably detailed (at least about 40 words):
   - Calculate match_score (0–100) based on keyword overlap, seniority, and responsibilities.
   - Set match_level to: "Low", "Medium", "High", or "Excellent".
   - missing_keywords: list the most critical 5–12 missing or weak keywords for this role.
   - recruiter_view: a short paragraph (2–4 sentences) describing how a recruiter would see this match.
 - If JD is missing or extremely short:
-  - still return job_match_analysis but with:
-    - match_score: conservative low value.
-    - match_level: "Insufficient JD" or "Unknown".
-    - missing_keywords: empty or generic.
-    - recruiter_view: mention clearly that JD was not provided or insufficient.
+  - You may set job_match_analysis to null or omit it.
+  - Do NOT guess a match_score.
 
 CERTIFICATIONS HANDLING:
 - Only place truly professional certifications (e.g., PMP®, CFA®, AWS Certified, Cisco, etc.)
@@ -151,13 +170,13 @@ CERTIFICATIONS HANDLING:
 
 SCORING PHILOSOPHY:
 - Penalize generic phrases (e.g. "responsible for", "team player") if overused.
-- Reward specific impact: "Reduced cost by 15%", "Improved uptime to 99.9%", etc.
+- Reward specific impact only when clearly stated in the original resume.
 - If the resume lacks keywords or concrete data relevant to its field,
   keep ats_rejection_risk as High or Medium-High (do NOT be overly optimistic).
 
 CONSISTENCY:
 - corrected_optimized_resume.plain_text = the final, fully formatted resume for the user.
-- corrected_optimized_resume.sections.summary / experience / skills / education
+- corrected_optimized_resume.sections.summary / experience / skills / education / certifications
   must be aligned with and extracted from plain_text content.
         `,
         temperature: 0.2,
@@ -225,8 +244,15 @@ CONSISTENCY:
                     experience: { type: Type.STRING },
                     skills: { type: Type.STRING },
                     education: { type: Type.STRING },
+                    certifications: { type: Type.STRING },
                   },
-                  required: ["summary", "experience", "skills", "education"],
+                  required: [
+                    "summary",
+                    "experience",
+                    "skills",
+                    "education",
+                    "certifications",
+                  ],
                 },
               },
               required: ["plain_text", "sections"],
@@ -300,7 +326,6 @@ CONSISTENCY:
             "corrected_optimized_resume",
             "corrected_after_optimization",
             "credibility_verdict"
-            // job_match_analysis متروكة اختيارية من ناحية الـ required
           ],
         },
       },
@@ -319,7 +344,30 @@ CONSISTENCY:
     }
 
     const cleanedJson = rawText.replace(/```json|```/g, "").trim();
-    return JSON.parse(cleanedJson) as AnalysisResult;
+    const parsed = JSON.parse(cleanedJson) as AnalysisResult;
+
+    // ✅ إذا ما فيه JD فعليًا، نحذف job_match_analysis عشان الواجهة ما تعرض أي نسبة
+    if (!cleanedJD.trim()) {
+      (parsed as any).job_match_analysis = undefined;
+    }
+
+    // ✅ فحص صارم لطول السيرة المحسّنة (500–700 كلمة)
+    const plain = parsed.corrected_optimized_resume?.plain_text || "";
+    const wordCount = plain
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean).length;
+
+    if (wordCount < 500 || wordCount > 700) {
+      console.error(
+        `Length constraint violated: got ${wordCount} words (required 500–700).`
+      );
+      throw new Error(
+        `LENGTH_CONSTRAINT_VIOLATION: optimized resume has ${wordCount} words (required 500–700).`
+      );
+    }
+
+    return parsed;
   } catch (error: any) {
     console.error("Gemini API Error:", error);
     throw error;

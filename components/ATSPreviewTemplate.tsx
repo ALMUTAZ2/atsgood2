@@ -1,4 +1,3 @@
-// components/ATSPreviewTemplate.tsx
 import React from 'react';
 
 interface ATSPreviewTemplateProps {

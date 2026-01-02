@@ -34,7 +34,7 @@ import { jsPDF } from 'jspdf';
 import { Document, Packer, Paragraph, TextRun } from 'docx';
 import FileSaver from 'file-saver';
 
-// قالب المعاينة (لو عندك الملف؛ لو ما عندك احذف السطرين الخاصة فيه)
+// قالب المعاينة
 import { ATSPreviewTemplate } from './components/ATSPreviewTemplate.tsx';
 
 const saveAs = (FileSaver as any).saveAs || (FileSaver as any).default || FileSaver;
@@ -43,13 +43,13 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = `https://esm.sh/pdfjs-dist@4.10.38/buil
 const MAX_FILE_SIZE = 2 * 1024 * 1024;
 const MAX_USAGE = 2;
 
-// حد الكلمات لوصف الوظيفة (اختياري – لتحسين Job Match)
+// حد الكلمات لوصف الوظيفة
 const MIN_JD_WORDS = 40;
 const MAX_JD_WORDS = 80;
 
 export default function App() {
   const [resumeText, setResumeText] = useState<string>('');
-  const [jobDescription, setJobDescription] = useState<string>(''); // JD
+  const [jobDescription, setJobDescription] = useState<string>('');
   const [status, setStatus] = useState<AppStatus>('idle');
   const [extracting, setExtracting] = useState(false);
   const [result, setResult] = useState<AnalysisResult | null>(null);
@@ -58,7 +58,7 @@ export default function App() {
   const [usageCount, setUsageCount] = useState<number>(0);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const abortControllerRef = useRef<AbortController | null>(null);
+  const abortControllerRef = useRef<AbortSignal | null>(null);
 
   // ================== SECTION HEADERS LOGIC ==================
 
@@ -169,27 +169,52 @@ export default function App() {
       return;
     }
 
-    if (abortControllerRef.current) abortControllerRef.current.abort();
-    abortControllerRef.current = new AbortController();
+    // إلغاء أي طلب سابق
+    if (abortControllerRef.current && 'abort' in abortControllerRef.current) {
+      (abortControllerRef.current as any).abort();
+    }
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller.signal;
 
     setStatus('analyzing');
     setError(null);
+
+    // تايم أوت احترازي 60 ثانية
+    const timeoutId = window.setTimeout(() => {
+      controller.abort();
+    }, 60000);
+
     try {
-      // نمرر JD فقط لو وصلت للحد الأدنى، غير كذا نخليها فاضية
       const effectiveJD = jdWordCount >= MIN_JD_WORDS ? jobDescription : '';
 
       const data = await analyzeResume(
         resumeText,
         effectiveJD,
-        abortControllerRef.current.signal
+        controller.signal
       );
+      window.clearTimeout(timeoutId);
+
       setResult(data);
-
       incrementUsage();
-
       setStatus('completed');
     } catch (err: any) {
-      if (err?.name === 'AbortError' || err?.message?.includes('aborted')) return;
+      window.clearTimeout(timeoutId);
+
+      // في حالة الإلغاء / التايم أوت
+      if (
+        err?.name === 'AbortError' ||
+        err?.message?.includes('AbortError') ||
+        err?.message?.includes('aborted')
+      ) {
+        setError({
+          message: 'Audit request was cancelled or timed out.',
+          hint: 'Try again. If this keeps happening, shorten the resume or try later.',
+          tech: 'REQUEST_ABORTED'
+        });
+        setStatus('error');
+        return;
+      }
 
       console.error('Audit processing failed:', err);
 
@@ -203,6 +228,13 @@ export default function App() {
         hint = "Add 'VITE_API_KEY' in Vercel Environment Variables, redeploy, and try again.";
       }
 
+      if (err?.message?.startsWith('LENGTH_CONSTRAINT_VIOLATION')) {
+        message = 'Length constraint violation.';
+        hint =
+          'The optimized resume must be between 500–700 words. Adjust the input and try again.';
+        tech = err.message;
+      }
+
       setError({ message, hint, tech });
       setStatus('error');
     } finally {
@@ -211,8 +243,8 @@ export default function App() {
   };
 
   const handleCancelAnalysis = () => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
+    if (abortControllerRef.current && 'abort' in abortControllerRef.current) {
+      (abortControllerRef.current as any).abort();
       setStatus('idle');
     }
   };
@@ -405,8 +437,7 @@ export default function App() {
     writeSection('WORK EXPERIENCE', sections.experience);
     writeSection('EDUCATION', sections.education);
     writeSection('SKILLS', sections.skills);
-    // لو أضفت لاحقًا sections.certifications تقدر تكتب:
-    // writeSection('CERTIFICATIONS', (sections as any).certifications);
+    writeSection('CERTIFICATIONS', sections.certifications);
 
     doc.save('ATS_Audited_Resume.pdf');
   };
@@ -504,7 +535,7 @@ export default function App() {
     addSection('WORK EXPERIENCE', sections.experience);
     addSection('EDUCATION', sections.education);
     addSection('SKILLS', sections.skills);
-    // addSection('CERTIFICATIONS', (sections as any).certifications);
+    addSection('CERTIFICATIONS', sections.certifications);
 
     const doc = new Document({
       sections: [
@@ -849,7 +880,7 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Job Match Card (لو فيه JD analysis) */}
+                  {/* Job Match Card – يظهر فقط لو فيه job_match_analysis من الـ backend */}
                   {result.job_match_analysis && (
                     <div className="bg-emerald-500 rounded-2xl p-4 text-slate-900">
                       <div className="flex items-center justify-between mb-2">
@@ -874,7 +905,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* باقي المحتوى كما هو تقريبًا */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
               <div className="lg:col-span-4 space-y-6">
                 <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
@@ -934,7 +964,7 @@ export default function App() {
               </div>
 
               <div className="lg:col-span-8 space-y-6">
-                {/* النص الخام */}
+                {/* النص الخام ATS-Safe */}
                 <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
                   <div className="px-6 py-4 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
                     <div className="flex items-center gap-2">
@@ -976,7 +1006,7 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* قالب المعاينة – تقدر تعدل بيانات الهيدر لاحقًا لتجي من الـ resume */}
+                {/* قالب معاينة ATS-Friendly */}
                 <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
                   <div className="px-6 py-4 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
                     <div className="flex items-center gap-2">
@@ -998,6 +1028,7 @@ export default function App() {
                       experience={result.corrected_optimized_resume.sections.experience}
                       education={result.corrected_optimized_resume.sections.education}
                       skills={result.corrected_optimized_resume.sections.skills}
+                      certifications={result.corrected_optimized_resume.sections.certifications}
                     />
                   </div>
                 </div>
