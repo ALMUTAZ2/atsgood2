@@ -3,10 +3,11 @@ import { AnalysisResult } from "./types.ts";
 
 /**
  * Enterprise ATS Auditor Service
- * Generic service for any user's resume.
+ * Generic service for any user's resume + optional Job Description.
  */
 export const analyzeResume = async (
   resumeText: string,
+  jobDescription?: string,
   signal?: AbortSignal
 ): Promise<AnalysisResult> => {
   // Read API key (works with Vercel + Vite bridge)
@@ -22,7 +23,28 @@ export const analyzeResume = async (
   }
 
   const ai = new GoogleGenAI({ apiKey });
-  const cleanedInput = resumeText.slice(0, 15000);
+
+  // نحمي من undefined
+  const safeResume = typeof resumeText === "string" ? resumeText : "";
+  const safeJD = typeof jobDescription === "string" ? jobDescription : "";
+
+  const cleanedResume = safeResume.slice(0, 15000);
+  const cleanedJD = safeJD.slice(0, 4000);
+
+  // بلوك اختياري لو فيه JD
+  const jdBlock = cleanedJD
+    ? `
+JOB DESCRIPTION FOR JOB MATCH ANALYSIS:
+Use this ONLY to:
+- evaluate job_match_analysis
+- understand target role level & keywords
+Do NOT fabricate experience that is not supported by the resume.
+
+"""
+${cleanedJD}
+"""
+`
+    : "";
 
   try {
     const response = await ai.models.generateContent({
@@ -42,18 +64,23 @@ No explanations, no markdown, no extra text.
 
 RESUME TO AUDIT:
 """
-${cleanedInput}
+${cleanedResume}
 """
+${jdBlock}
       `,
       config: {
         systemInstruction: `
 You are an elite Enterprise ATS Quality Control Auditor & Global Recruiter.
 
+INPUTS:
+- A resume (always provided).
+- An optional Job Description (JD). If JD is missing or very short, you must still return a valid JSON but with conservative job_match_analysis.
+
 MISSION:
-- Rewrite the resume so it is clear, impact-driven, and ATS-friendly.
-- If the input is short or poorly written, expand using realistic responsibilities
-  for that role level (junior / mid / senior) without inventing fake achievements.
-- Every bullet should follow Action–Context–Result (ACR) and use metrics when possible (%, $, time, volume, scale).
+1) Rewrite the resume so it is clear, impact-driven, and ATS-friendly.
+2) If the input is short or poorly written, expand using realistic responsibilities
+   for that role level (junior / mid / senior) without inventing fake achievements.
+3) Every bullet should follow Action–Context–Result (ACR) and use metrics when possible (%, $, time, volume, scale).
 
 CRITICAL RULES FOR corrected_optimized_resume.plain_text:
 
@@ -98,26 +125,31 @@ CRITICAL RULES FOR corrected_optimized_resume.plain_text:
    - Each on its own line or at most two simple lines.
    - NO pipes, NO inline "Name | Email | Phone".
 
-7) CERTIFICATIONS (VERY IMPORTANT):
-   - CERTIFICATIONS section must contain ONLY professional / recognized credentials, for example:
-     PMP, CAPM, CFA, CPA, AWS / Azure / GCP certifications, Cisco, VMware, SAP, Oracle,
-     professional engineering licenses, chartered engineer status, etc.
-   - DO NOT put generic training, short workshops, or simple course attendance in CERTIFICATIONS.
-   - Non-professional courses / attendance can be:
-     - Kept under EDUCATION as simple bullets, OR
-     - Omitted if too weak or repetitive.
-   - corrected_optimized_resume.sections.certifications must be built ONLY from this professional content.
-   - The CERTIFICATIONS block in plain_text must match this logic.
-
-8) LANGUAGES:
-   - If languages are provided, keep them in a LANGUAGES section in plain_text.
-   - You do NOT need a separate languages field in sections; keep them in plain_text only.
-
-9) NO SINGLE-PARAGRAPH OUTPUT:
+7) NO SINGLE-PARAGRAPH OUTPUT:
    - It is INVALID to return the entire resume as one paragraph or one long line.
    - The plain_text MUST have multiple lines and blank lines between sections.
 
-SCORING PHILOSOPHY (APPLIES TO ANY USER):
+JOB MATCH ANALYSIS (job_match_analysis):
+- If a Job Description (JD) is provided and reasonably detailed:
+  - Calculate match_score (0–100) based on keyword overlap, seniority, and responsibilities.
+  - Set match_level to: "Low", "Medium", "High", or "Excellent".
+  - missing_keywords: list the most critical 5–12 missing or weak keywords for this role.
+  - recruiter_view: a short paragraph (2–4 sentences) describing how a recruiter would see this match.
+- If JD is missing or extremely short:
+  - still return job_match_analysis but with:
+    - match_score: conservative low value.
+    - match_level: "Insufficient JD" or "Unknown".
+    - missing_keywords: empty or generic.
+    - recruiter_view: mention clearly that JD was not provided or insufficient.
+
+CERTIFICATIONS HANDLING:
+- Only place truly professional certifications (e.g., PMP®, CFA®, AWS Certified, Cisco, etc.)
+  into the CERTIFICATIONS section.
+- Do NOT include generic training, short webinars, or attendance-only certificates there.
+- If the user includes minor attendance certificates, keep them in EXPERIENCE or a generic section,
+  but avoid inflating the CERTIFICATIONS heading.
+
+SCORING PHILOSOPHY:
 - Penalize generic phrases (e.g. "responsible for", "team player") if overused.
 - Reward specific impact: "Reduced cost by 15%", "Improved uptime to 99.9%", etc.
 - If the resume lacks keywords or concrete data relevant to its field,
@@ -125,8 +157,8 @@ SCORING PHILOSOPHY (APPLIES TO ANY USER):
 
 CONSISTENCY:
 - corrected_optimized_resume.plain_text = the final, fully formatted resume for the user.
-- corrected_optimized_resume.sections.summary / experience / skills / education / certifications
-  must be aligned with and extracted from the corresponding content in plain_text.
+- corrected_optimized_resume.sections.summary / experience / skills / education
+  must be aligned with and extracted from plain_text content.
         `,
         temperature: 0.2,
         responseMimeType: "application/json",
@@ -193,15 +225,8 @@ CONSISTENCY:
                     experience: { type: Type.STRING },
                     skills: { type: Type.STRING },
                     education: { type: Type.STRING },
-                    certifications: { type: Type.STRING },
                   },
-                  required: [
-                    "summary",
-                    "experience",
-                    "skills",
-                    "education",
-                    "certifications",
-                  ],
+                  required: ["summary", "experience", "skills", "education"],
                 },
               },
               required: ["plain_text", "sections"],
@@ -250,13 +275,32 @@ CONSISTENCY:
                 "enterprise_readiness",
               ],
             },
+            job_match_analysis: {
+              type: Type.OBJECT,
+              properties: {
+                match_score: { type: Type.NUMBER },
+                match_level: { type: Type.STRING },
+                missing_keywords: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                },
+                recruiter_view: { type: Type.STRING },
+              },
+              required: [
+                "match_score",
+                "match_level",
+                "missing_keywords",
+                "recruiter_view",
+              ],
+            },
           },
           required: [
             "audit_findings",
             "corrected_before_optimization",
             "corrected_optimized_resume",
             "corrected_after_optimization",
-            "credibility_verdict",
+            "credibility_verdict"
+            // job_match_analysis متروكة اختيارية من ناحية الـ required
           ],
         },
       },
@@ -274,7 +318,8 @@ CONSISTENCY:
       throw new Error("EMPTY_AI_RESPONSE");
     }
 
-    return JSON.parse(rawText.replace(/```json|```/g, "").trim());
+    const cleanedJson = rawText.replace(/```json|```/g, "").trim();
+    return JSON.parse(cleanedJson) as AnalysisResult;
   } catch (error: any) {
     console.error("Gemini API Error:", error);
     throw error;

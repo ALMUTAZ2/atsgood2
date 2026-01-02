@@ -34,17 +34,22 @@ import { jsPDF } from 'jspdf';
 import { Document, Packer, Paragraph, TextRun } from 'docx';
 import FileSaver from 'file-saver';
 
-// قالب المعاينة
+// قالب المعاينة (لو عندك الملف؛ لو ما عندك احذف السطرين الخاصة فيه)
 import { ATSPreviewTemplate } from './components/ATSPreviewTemplate.tsx';
 
 const saveAs = (FileSaver as any).saveAs || (FileSaver as any).default || FileSaver;
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://esm.sh/pdfjs-dist@4.10.38/build/pdf.worker.mjs`;
 
 const MAX_FILE_SIZE = 2 * 1024 * 1024;
-const MAX_USAGE = 2; // حد الاستخدام لكل متصفح
+const MAX_USAGE = 2;
+
+// حد الكلمات لوصف الوظيفة (اختياري – لتحسين Job Match)
+const MIN_JD_WORDS = 40;
+const MAX_JD_WORDS = 80;
 
 export default function App() {
-  const [resumeText, setResumeText] = useState('');
+  const [resumeText, setResumeText] = useState<string>('');
+  const [jobDescription, setJobDescription] = useState<string>(''); // JD
   const [status, setStatus] = useState<AppStatus>('idle');
   const [extracting, setExtracting] = useState(false);
   const [result, setResult] = useState<AnalysisResult | null>(null);
@@ -66,27 +71,27 @@ export default function App() {
     'SKILLS',
     'TECHNICAL SKILLS',
     'EDUCATION',
-    'CERTIFICATIONS', // ✅
+    'CERTIFICATIONS',
     'LANGUAGES',
     'ADDITIONAL INFORMATION'
   ];
 
   const isSectionHeader = (line: string) => {
-    const t = line.trim();
+    const t = (line || '').trim();
     if (!t) return false;
     const upper = t.toUpperCase();
 
     if (SECTION_HEADERS.includes(upper)) return true;
 
-    // عنوان عام: كله كابيتال، مو بوليت، وطوله معقول
     if (upper === t && !t.startsWith('-') && t.length <= 60) return true;
 
     return false;
   };
 
   const renderResumeText = (text: string) => {
-    return text.split('\n').map((line, idx) => {
-      const trimmed = line.trim();
+    const safeText = text || '';
+    return safeText.split('\n').map((line, idx) => {
+      const trimmed = (line || '').trim();
 
       if (trimmed === '') {
         return <div key={idx} className="h-3" />;
@@ -116,7 +121,7 @@ export default function App() {
   useEffect(() => {
     try {
       const saved = localStorage.getItem('ats_usage_count');
-      if (saved) {
+      if (saved != null) {
         const num = Number(saved);
         if (!Number.isNaN(num)) {
           setUsageCount(num);
@@ -139,12 +144,21 @@ export default function App() {
     });
   };
 
+  // ================== JD WORD COUNT ==================
+
+  const jdWordCount = useMemo(() => {
+    const text = (jobDescription || '').trim();
+    if (!text) return 0;
+    return text.split(/\s+/).filter(Boolean).length;
+  }, [jobDescription]);
+
+  const isJDWithinLimit = jdWordCount === 0 || jdWordCount >= MIN_JD_WORDS;
+
   // ================== HANDLERS ==================
 
   const handleProcess = async () => {
     if (!resumeText.trim()) return;
 
-    // تحقق من الحد قبل الإرسال
     if (usageCount >= MAX_USAGE) {
       setError({
         message: 'Usage limit reached.',
@@ -161,24 +175,30 @@ export default function App() {
     setStatus('analyzing');
     setError(null);
     try {
-      const data = await analyzeResume(resumeText, abortControllerRef.current.signal);
+      // نمرر JD فقط لو وصلت للحد الأدنى، غير كذا نخليها فاضية
+      const effectiveJD = jdWordCount >= MIN_JD_WORDS ? jobDescription : '';
+
+      const data = await analyzeResume(
+        resumeText,
+        effectiveJD,
+        abortControllerRef.current.signal
+      );
       setResult(data);
 
-      // زيادة العداد بعد نجاح التحليل
       incrementUsage();
 
       setStatus('completed');
     } catch (err: any) {
-      if (err.name === 'AbortError' || err.message?.includes('aborted')) return;
+      if (err?.name === 'AbortError' || err?.message?.includes('aborted')) return;
 
       console.error('Audit processing failed:', err);
 
       let message = 'The Auditor encountered an issue.';
       let hint =
         'If this is your first time deploying, ensure you have set the VITE_API_KEY correctly in Vercel.';
-      let tech = err.message || 'Unknown technical error';
+      let tech = err?.message || 'Unknown technical error';
 
-      if (err.message === 'API_KEY_MISSING_IN_BROWSER') {
+      if (err?.message === 'API_KEY_MISSING_IN_BROWSER') {
         message = 'Vercel Configuration Error';
         hint = "Add 'VITE_API_KEY' in Vercel Environment Variables, redeploy, and try again.";
       }
@@ -210,7 +230,10 @@ export default function App() {
       let text = '';
       if (file.type === 'application/pdf') {
         text = await extractTextFromPDF(file);
-      } else if (file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+      } else if (
+        file.type ===
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      ) {
         text = await extractTextFromDocx(file);
       } else if (file.type === 'text/plain') {
         text = await file.text();
@@ -220,7 +243,7 @@ export default function App() {
       if (!text.trim()) throw new Error('Could not extract meaningful text.');
       setResumeText(text);
     } catch (err: any) {
-      setError({ message: err.message || 'Error reading file.' });
+      setError({ message: err?.message || 'Error reading file.' });
     } finally {
       setExtracting(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -259,7 +282,8 @@ export default function App() {
 
   // ========= helper: استخراج الهيدر من plain_text =========
   const extractHeaderFromPlainText = (plain: string) => {
-    const lines = plain.split('\n').map((l) => l.trim());
+    const safe = plain || '';
+    const lines = safe.split('\n').map((l) => (l || '').trim());
     let fullName = 'Your Name';
     let title = '';
     let email = '';
@@ -268,14 +292,12 @@ export default function App() {
     let location = '';
 
     let idx = 0;
-    // أول سطر غير فاضي = الاسم
     while (idx < lines.length && !lines[idx]) idx++;
     if (idx < lines.length) {
       fullName = lines[idx];
       idx++;
     }
 
-    // بعد الاسم، نقرأ كم سطر لحد ما نوصل هيدر سيكشن
     for (; idx < lines.length; idx++) {
       const l = lines[idx];
       if (!l) continue;
@@ -283,11 +305,11 @@ export default function App() {
 
       const lower = l.toLowerCase();
       if (lower.startsWith('email:')) {
-        email = l.replace(/^[Ee]mail:\s*/,'').trim();
+        email = l.replace(/^[Ee]mail:\s*/, '').trim();
       } else if (lower.startsWith('mobile:') || lower.startsWith('phone:')) {
-        phone = l.replace(/^(mobile|phone):\s*/i,'').trim();
+        phone = l.replace(/^(mobile|phone):\s*/i, '').trim();
       } else if (lower.startsWith('linkedin')) {
-        linkedin = l.replace(/^linkedin:?/i,'').trim();
+        linkedin = l.replace(/^linkedin:?/i, '').trim();
       } else {
         if (!title) title = l;
         else if (!location) location = l;
@@ -303,7 +325,6 @@ export default function App() {
     if (!result) return;
 
     const { plain_text, sections } = result.corrected_optimized_resume;
-
     const header = extractHeaderFromPlainText(plain_text);
 
     const doc = new jsPDF();
@@ -354,7 +375,7 @@ export default function App() {
 
     y += 4;
 
-    const writeSection = (headerTitle: string, body: string) => {
+    const writeSection = (headerTitle: string, body: string | undefined) => {
       if (!body || !body.trim()) return;
 
       ensureNewPage();
@@ -366,7 +387,7 @@ export default function App() {
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(10);
 
-      const bodyLines = body.split('\n').filter((l) => l.trim() !== '');
+      const bodyLines = body.split('\n').filter((l) => (l || '').trim() !== '');
       bodyLines.forEach((raw) => {
         const line = raw.startsWith('-') ? raw : `- ${raw}`;
         const wrapped = doc.splitTextToSize(line, usableWidth);
@@ -384,7 +405,8 @@ export default function App() {
     writeSection('WORK EXPERIENCE', sections.experience);
     writeSection('EDUCATION', sections.education);
     writeSection('SKILLS', sections.skills);
-    writeSection('CERTIFICATIONS', sections.certifications); // ✅
+    // لو أضفت لاحقًا sections.certifications تقدر تكتب:
+    // writeSection('CERTIFICATIONS', (sections as any).certifications);
 
     doc.save('ATS_Audited_Resume.pdf');
   };
@@ -399,7 +421,6 @@ export default function App() {
 
     const paragraphs: Paragraph[] = [];
 
-    // اسم
     paragraphs.push(
       new Paragraph({
         spacing: { after: 100 },
@@ -413,7 +434,6 @@ export default function App() {
       })
     );
 
-    // عنوان وظيفي (إن وجد)
     if (header.title) {
       paragraphs.push(
         new Paragraph({
@@ -429,35 +449,25 @@ export default function App() {
       );
     }
 
-    // سطر تواصل
     const contactParts: string[] = [];
     if (header.location) contactParts.push(header.location);
     if (header.email) contactParts.push(`Email: ${header.email}`);
     if (header.phone) contactParts.push(`Mobile: ${header.phone}`);
     if (header.linkedin) contactParts.push(`LinkedIn: ${header.linkedin}`);
 
-    if (contactParts.length) {
-      paragraphs.push(
-        new Paragraph({
-          spacing: { after: 200 },
-          children: [
-            new TextRun({
-              text: contactParts.join(' • '),
-              size: 20
-            })
-          ]
-        })
-      );
-    } else {
-      paragraphs.push(
-        new Paragraph({
-          spacing: { after: 200 },
-          children: [new TextRun({ text: '', size: 20 })]
-        })
-      );
-    }
+    paragraphs.push(
+      new Paragraph({
+        spacing: { after: 200 },
+        children: [
+          new TextRun({
+            text: contactParts.join(' • '),
+            size: 20
+          })
+        ]
+      })
+    );
 
-    const addSection = (headerTitle: string, body: string) => {
+    const addSection = (headerTitle: string, body: string | undefined) => {
       if (!body || !body.trim()) return;
 
       paragraphs.push(
@@ -473,7 +483,7 @@ export default function App() {
         })
       );
 
-      const bodyLines = body.split('\n').filter((l) => l.trim() !== '');
+      const bodyLines = body.split('\n').filter((l) => (l || '').trim() !== '');
       bodyLines.forEach((raw) => {
         const text = raw.startsWith('-') ? raw : `- ${raw}`;
         paragraphs.push(
@@ -494,7 +504,7 @@ export default function App() {
     addSection('WORK EXPERIENCE', sections.experience);
     addSection('EDUCATION', sections.education);
     addSection('SKILLS', sections.skills);
-    addSection('CERTIFICATIONS', sections.certifications); // ✅
+    // addSection('CERTIFICATIONS', (sections as any).certifications);
 
     const doc = new Document({
       sections: [
@@ -513,8 +523,8 @@ export default function App() {
     setStatus('idle');
     setResult(null);
     setResumeText('');
+    setJobDescription('');
     setError(null);
-    // ما نلمس usageCount عشان يظل حقيقي
   };
 
   const radarData = useMemo(() => {
@@ -659,35 +669,61 @@ export default function App() {
                 )}
               </div>
 
-              <div className="bg-white border border-slate-200 rounded-2xl shadow-xl p-6">
-                <label className="block text-sm font-bold text-slate-700 mb-2 uppercase tracking-wider">
-                  Review Content
-                </label>
-                <textarea
-                  className="w-full h-64 p-4 border border-slate-100 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none font-mono text-sm bg-slate-50 text-slate-600"
-                  placeholder="Paste resume content here for audit..."
-                  value={resumeText}
-                  onChange={(e) => setResumeText(e.target.value)}
-                />
+              {/* محرر السيرة + JD */}
+              <div className="bg-white border border-slate-200 rounded-2xl shadow-xl p-6 space-y-6">
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-2 uppercase tracking-wider">
+                    Review Content (Resume)
+                  </label>
+                  <textarea
+                    className="w-full h-64 p-4 border border-slate-100 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none font-mono text-sm bg-slate-50 text-slate-600"
+                    placeholder="Paste resume content here for audit..."
+                    value={resumeText}
+                    onChange={(e) => setResumeText(e.target.value)}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-2 uppercase tracking-wider">
+                    Job Description (Optional)
+                  </label>
+                  <textarea
+                    className="w-full h-40 p-4 border border-slate-100 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none text-sm bg-slate-50 text-slate-600"
+                    placeholder="Paste the job description here to get a Job Match % score (recommended at least 40 words)..."
+                    value={jobDescription}
+                    onChange={(e) => setJobDescription(e.target.value)}
+                  />
+                  <div className="mt-1 flex justify-between text-[11px]">
+                    <span className={isJDWithinLimit ? 'text-emerald-600' : 'text-amber-600'}>
+                      JD Words: {jdWordCount} / {MAX_JD_WORDS}{' '}
+                      {!isJDWithinLimit && '(minimum 40 words for full Job Match analysis)'}
+                    </span>
+                    <span className="text-slate-400">
+                      Job Match uses JD but ATS score works even without it.
+                    </span>
+                  </div>
+                </div>
+
                 {error && (
-                  <div className="mt-4 p-4 bg-rose-50 border border-rose-100 text-rose-600 rounded-lg flex flex-col gap-1">
+                  <div className="mt-2 p-4 bg-rose-50 border border-rose-100 text-rose-600 rounded-lg flex flex-col gap-1">
                     <div className="flex items-center gap-2 font-bold text-sm">
                       <AlertCircle className="w-4 h-4" /> {error.message}
                     </div>
                     {error.hint && (
                       <p className="text-xs text-rose-500 ml-6 italic">{error.hint}</p>
                     )}
-                    {error.tech && error.tech === 'USAGE_LIMIT_REACHED' && (
+                    {error.tech === 'USAGE_LIMIT_REACHED' && (
                       <p className="mt-2 text-[11px] text-rose-500">
                         This browser has reached the free quota. Further audits are blocked.
                       </p>
                     )}
                   </div>
                 )}
+
                 <button
                   onClick={handleProcess}
                   disabled={!resumeText.trim() || extracting || usageCount >= MAX_USAGE}
-                  className="w-full mt-4 py-4 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-bold rounded-xl transition-all shadow-lg flex items-center justify-center gap-2"
+                  className="w-full mt-2 py-4 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-bold rounded-xl transition-all shadow-lg flex items-center justify-center gap-2"
                 >
                   {usageCount >= MAX_USAGE ? 'Usage Limit Reached' : 'Initiate Quality Audit'}
                   <ChevronRight className="w-5 h-5" />
@@ -753,6 +789,7 @@ export default function App() {
 
         {status === 'completed' && result && (
           <div className="space-y-8 animate-in fade-in duration-1000">
+            {/* كرت النتيجة + Job Match */}
             <div className="bg-slate-900 rounded-3xl p-8 text-white shadow-2xl overflow-hidden relative">
               <div className="absolute top-0 right-0 p-8 opacity-10">
                 <ShieldCheck className="w-64 h-64" />
@@ -785,33 +822,59 @@ export default function App() {
                     </div>
                   </div>
                 </div>
-                <div className="bg-blue-600 rounded-2xl p-6 flex flex-col justify-between">
-                  <div>
-                    <span className="text-blue-200 text-xs font-black uppercase tracking-widest">
-                      Audited Score
-                    </span>
-                    <div className="text-6xl font-black text-white mt-1">
-                      {result.corrected_after_optimization.final_ats_score}
+
+                <div className="space-y-4">
+                  <div className="bg-blue-600 rounded-2xl p-6 flex flex-col justify-between">
+                    <div>
+                      <span className="text-blue-200 text-xs font-black uppercase tracking-widest">
+                        Audited Score
+                      </span>
+                      <div className="text-6xl font-black text-white mt-1">
+                        {result.corrected_after_optimization.final_ats_score}
+                      </div>
+                    </div>
+                    <div className="mt-4 pt-4 border-t border-white/20">
+                      <span className="text-blue-200 text-xs font-bold">Confidence Level</span>
+                      <div className="w-full bg-blue-900 h-2 mt-2 rounded-full overflow-hidden">
+                        <div
+                          className="bg-white h-full transition-all duration-1000"
+                          style={{
+                            width: `${result.corrected_after_optimization.ats_confidence_level}%`
+                          }}
+                        ></div>
+                      </div>
+                      <div className="text-right text-xs font-bold text-white mt-1">
+                        {result.corrected_after_optimization.ats_confidence_level}%
+                      </div>
                     </div>
                   </div>
-                  <div className="mt-4 pt-4 border-t border-white/20">
-                    <span className="text-blue-200 text-xs font-bold">Confidence Level</span>
-                    <div className="w-full bg-blue-900 h-2 mt-2 rounded-full overflow-hidden">
-                      <div
-                        className="bg-white h-full transition-all duration-1000"
-                        style={{
-                          width: `${result.corrected_after_optimization.ats_confidence_level}%`
-                        }}
-                      ></div>
+
+                  {/* Job Match Card (لو فيه JD analysis) */}
+                  {result.job_match_analysis && (
+                    <div className="bg-emerald-500 rounded-2xl p-4 text-slate-900">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-black uppercase tracking-widest text-emerald-50">
+                          Job Match
+                        </span>
+                        <span className="text-xs font-bold bg-emerald-700 text-emerald-50 px-2 py-0.5 rounded-full">
+                          {result.job_match_analysis.match_level}
+                        </span>
+                      </div>
+                      <div className="flex items-baseline justify-between">
+                        <span className="text-3xl font-black text-white">
+                          {Math.round(result.job_match_analysis.match_score)}%
+                        </span>
+                      </div>
+                      <p className="mt-2 text-xs text-emerald-50">
+                        {result.job_match_analysis.recruiter_view}
+                      </p>
                     </div>
-                    <div className="text-right text-xs font-bold text-white mt-1">
-                      {result.corrected_after_optimization.ats_confidence_level}%
-                    </div>
-                  </div>
+                  )}
                 </div>
               </div>
             </div>
 
+            {/* باقي المحتوى كما هو تقريبًا */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
               <div className="lg:col-span-4 space-y-6">
                 <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
@@ -871,7 +934,7 @@ export default function App() {
               </div>
 
               <div className="lg:col-span-8 space-y-6">
-                {/* النص الخام ATS-Safe */}
+                {/* النص الخام */}
                 <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
                   <div className="px-6 py-4 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
                     <div className="flex items-center gap-2">
@@ -913,7 +976,7 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* قالب معاينة ATS-Friendly */}
+                {/* قالب المعاينة – تقدر تعدل بيانات الهيدر لاحقًا لتجي من الـ resume */}
                 <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
                   <div className="px-6 py-4 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
                     <div className="flex items-center gap-2">
@@ -935,7 +998,6 @@ export default function App() {
                       experience={result.corrected_optimized_resume.sections.experience}
                       education={result.corrected_optimized_resume.sections.education}
                       skills={result.corrected_optimized_resume.sections.skills}
-                      certifications={result.corrected_optimized_resume.sections.certifications}
                     />
                   </div>
                 </div>

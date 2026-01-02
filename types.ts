@@ -20,6 +20,14 @@ export interface AuditFinding {
   correction_applied: string;
 }
 
+// تحليل مدى التوافق مع الوصف الوظيفي
+export interface JobMatchAnalysis {
+  match_score: number;            // نسبة مئوية 0–100
+  match_level: string;            // مثلا: "High", "Medium", "Low"
+  missing_keywords: string[];     // كلمات ناقصة مهمة
+  recruiter_view: string;         // تعليق مختصر من منظور مجنّد
+}
+
 export interface AnalysisResult {
   audit_findings: AuditFinding[];
   corrected_before_optimization: OptimizationAuditData;
@@ -30,7 +38,6 @@ export interface AnalysisResult {
       experience: string;
       skills: string;
       education: string;
-      certifications: string; // ✅ الشهادات الاحترافية فقط
     };
   };
   corrected_after_optimization: OptimizationAuditData;
@@ -39,6 +46,8 @@ export interface AnalysisResult {
     trust_level: string;
     enterprise_readiness: string;
   };
+  // حقل اختياري عشان ما يكسر أي رد قديم بدون JD
+  job_match_analysis?: JobMatchAnalysis;
 }
 
 export type AppStatus = 'idle' | 'analyzing' | 'completed' | 'error';
